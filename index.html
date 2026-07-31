@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MusicPlayer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 背景动态渐变层 -->
+  <div id="bg-blur"></div>
+
+  <div class="app">
+    <!-- 顶部标题栏 -->
+    <header class="titlebar">
+      <span class="logo">
+        <span id="logo-mark">🎵</span><span id="logo-text">MusicPlayer-一切皆可自定</span>
+      </span>
+      <div class="header-actions">
+        <button id="btn-open-file" title="打开文件">📂 打开文件</button>
+        <button id="btn-open-folder" title="打开文件夹">📁 打开文件夹</button>
+        <button id="btn-transcode" class="btn-transcode-header" title="转码工具">⚙️ 转码</button>
+        <button id="btn-equalizer" class="btn-equalizer-header" title="均衡器">🎚️ 均衡器</button>
+        <button id="btn-settings" class="btn-settings-header" title="设置" aria-label="设置">⚙️ 设置</button>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- 左侧播放列表 -->
+      <aside class="playlist-panel">
+        <div class="playlist-header">
+          <span>播放列表</span>
+          <span id="track-count" class="track-count">0 首</span>
+        </div>
+        <ul id="playlist" class="playlist"></ul>
+      </aside>
+
+      <!-- 右侧播放器主体 -->
+      <main class="player-main">
+        <!-- 封面区域 -->
+        <div class="cover-wrapper">
+          <div id="cover" class="cover spinning-paused">
+            <span class="cover-icon">🎵</span>
+          </div>
+        </div>
+
+        <!-- 歌曲信息 -->
+        <div class="track-info">
+          <div id="track-title" class="track-title">未选择音乐</div>
+          <div id="track-artist" class="track-artist">--</div>
+          <div id="track-format" class="track-format"></div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="progress-section">
+          <span id="current-time" class="time">0:00</span>
+          <div class="progress-bar-wrap" id="progress-bar-wrap">
+            <div id="progress-bar" class="progress-bar">
+              <div id="progress-fill" class="progress-fill"></div>
+              <div id="progress-thumb" class="progress-thumb"></div>
+            </div>
+          </div>
+          <span id="total-time" class="time">0:00</span>
+        </div>
+
+        <!-- 音量控制 -->
+        <div class="volume-section">
+          <span id="vol-icon" class="vol-icon">🔊</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" class="volume-slider" />
+          <span id="vol-value">80%</span>
+        </div>
+
+        <!-- 控制按钮 -->
+        <div class="controls">
+          <button id="btn-mode" class="ctrl-btn mode-btn" title="循环模式">🔁</button>
+          <button id="btn-prev" class="ctrl-btn" title="上一首">⏮</button>
+          <button id="btn-play" class="ctrl-btn play-btn" title="播放/暂停">▶</button>
+          <button id="btn-next" class="ctrl-btn" title="下一首">⏭</button>
+          <button id="btn-shuffle" class="ctrl-btn" title="随机播放">🔀</button>
+        </div>
+
+        <!-- 支持格式提示 -->
+        <div class="format-hint">
+          支持格式：MP3 · FLAC · WAV · OGG · AAC · M4A · OPUS · WebM · WMA · APE（部分）
+          &nbsp;|&nbsp; 内置 FFmpeg 转码引擎
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ===================== 均衡器面板 Modal ===================== -->
+  <div id="equalizer-overlay" class="equalizer-overlay hidden">
+    <div class="equalizer-modal">
+      <div class="equalizer-header">
+        <span class="equalizer-title">🎚️ 均衡器</span>
+        <button id="btn-close-equalizer" class="btn-close">✕</button>
+      </div>
+
+      <div class="equalizer-body">
+        <div class="eq-controls-row">
+          <button id="btn-eq-toggle" class="eq-toggle active">开启</button>
+          <select id="eq-preset" class="eq-preset">
+            <option value="flat">默认 (Flat)</option>
+            <option value="bass">重低音 (Bass)</option>
+            <option value="vocal">人声 (Vocal)</option>
+            <option value="treble">高音 (Treble)</option>
+            <option value="electronic">电子 (Electronic)</option>
+            <option value="rock">摇滚 (Rock)</option>
+            <option value="jazz">爵士 (Jazz)</option>
+            <option value="classical">古典 (Classical)</option>
+            <option value="pop">流行 (Pop)</option>
+          </select>
+        </div>
+
+        <div class="eq-bands-container">
+          <!-- 10段均衡器滑块 -->
+          <div class="eq-band" data-freq="32" data-index="0">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">32Hz</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="64" data-index="1">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">64Hz</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="125" data-index="2">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">125</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="250" data-index="3">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">250</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="500" data-index="4">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">500</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="1k" data-index="5">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">1k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="2k" data-index="6">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">2k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="4k" data-index="7">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">4k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="8k" data-index="8">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">8k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="16k" data-index="9">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">16k</span>
+            <span class="eq-db">0</span>
+          </div>
+        </div>
+
+        <div class="eq-visualizer">
+          <canvas id="eq-canvas" width="500" height="120"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 转码面板 Modal ===================== -->
+  <div id="transcode-overlay" class="transcode-overlay hidden">
+    <div class="transcode-modal">
+      <div class="transcode-header">
+        <span class="transcode-title">⚙️ FFmpeg 转码工具</span>
+        <button id="btn-close-transcode" class="btn-close">✕</button>
+      </div>
+
+      <!-- FFmpeg 加载状态 -->
+      <div id="ffmpeg-status" class="ffmpeg-status loading">
+        <span class="status-dot"></span>
+        <span id="ffmpeg-status-text">FFmpeg 引擎未加载，点击下方按钮初始化...</span>
+        <button id="btn-load-ffmpeg" class="btn-load-ffmpeg">🚀 加载 FFmpeg</button>
+      </div>
+
+      <div class="transcode-body">
+        <!-- 左：输入文件 -->
+        <div class="tc-section">
+          <div class="tc-label">① 选择源文件</div>
+          <div class="tc-drop-zone" id="tc-drop-zone">
+            <div class="tc-drop-icon">🎵</div>
+            <div class="tc-drop-text">拖拽音频文件到此处<br>或点击选择</div>
+            <input type="file" id="tc-file-input"
+              accept="audio/*,.mp3,.flac,.wav,.ogg,.aac,.m4a,.opus,.webm,.wma,.ape,.aiff"
+              multiple style="display:none" />
+          </div>
+          <!-- 源文件列表 -->
+          <ul id="tc-file-list" class="tc-file-list"></ul>
+        </div>
+
+        <!-- 右：转码参数 -->
+        <div class="tc-section">
+          <div class="tc-label">② 转码参数</div>
+
+          <div class="tc-form">
+            <div class="tc-row">
+              <label>输出格式</label>
+              <select id="tc-format">
+                <option value="mp3">MP3</option>
+                <option value="flac">FLAC（无损）</option>
+                <option value="wav">WAV（无损）</option>
+                <option value="ogg">OGG Vorbis</option>
+                <option value="aac">AAC</option>
+                <option value="opus">OPUS</option>
+                <option value="m4a">M4A</option>
+              </select>
+            </div>
+
+            <div class="tc-row" id="row-bitrate">
+              <label>比特率</label>
+              <select id="tc-bitrate">
+                <option value="64k">64 kbps（省流）</option>
+                <option value="128k">128 kbps</option>
+                <option value="192k" selected>192 kbps（推荐）</option>
+                <option value="256k">256 kbps（高质量）</option>
+                <option value="320k">320 kbps（最高）</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>采样率</label>
+              <select id="tc-samplerate">
+                <option value="22050">22050 Hz</option>
+                <option value="44100" selected>44100 Hz（CD）</option>
+                <option value="48000">48000 Hz（专业）</option>
+                <option value="96000">96000 Hz（Hi-Res）</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>声道</label>
+              <select id="tc-channels">
+                <option value="1">单声道</option>
+                <option value="2" selected>立体声</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>音量调整</label>
+              <input type="number" id="tc-volume" value="0" min="-30" max="30" step="1" class="tc-input-num" />
+              <span class="tc-unit">dB</span>
+            </div>
+
+            <div class="tc-row">
+              <label>速度调整</label>
+              <input type="number" id="tc-speed" value="1.0" min="0.5" max="2.0" step="0.1" class="tc-input-num" />
+              <span class="tc-unit">×</span>
+            </div>
+          </div>
+
+          <!-- 转码按钮 -->
+          <button id="btn-start-transcode" class="btn-start-transcode" disabled>
+            ⚙️ 开始转码
+          </button>
+        </div>
+      </div>
+
+      <!-- 转码任务队列 -->
+      <div class="tc-tasks-section">
+        <div class="tc-label">③ 转码队列</div>
+        <div id="tc-tasks" class="tc-tasks">
+          <div class="tc-empty">暂无转码任务</div>
+        </div>
+        <!-- 批量导出按钮 -->
+        <div id="tc-batch-actions" class="tc-batch-actions hidden">
+          <button id="btn-batch-export" class="btn-batch-export">⬇️ 批量导出全部</button>
+          <span id="tc-batch-count" class="tc-batch-count"></span>
+        </div>
+      </div>
+
+      <!-- 进度日志 -->
+      <div id="tc-log" class="tc-log hidden"></div>
+    </div>
+  </div>
+
+  <!-- ===================== 设置面板 Modal ===================== -->
+  <div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-modal glass">
+      <div class="settings-header">
+        <span class="settings-title">⚙️ 外观设置</span>
+        <button id="btn-close-settings" class="btn-close">✕</button>
+      </div>
+
+      <div class="settings-body">
+        <!-- 模糊 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">模糊 (Blur)</span>
+            <button id="set-blur-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <input type="range" id="set-blur-slider" min="0" max="40" value="10" step="1" class="set-slider" />
+            <span id="set-blur-val" class="set-val">10px</span>
+          </div>
+          <div class="settings-hint">关闭后界面完全透明，仅显示动态壁纸</div>
+        </div>
+
+        <!-- 毛玻璃 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">毛玻璃 (Frosted Glass)</span>
+            <button id="set-frost-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <button id="set-frost-minus" class="set-step" title="减少">−</button>
+            <input type="range" id="set-frost-slider" min="0" max="100" value="8" step="1" class="set-slider" />
+            <button id="set-frost-plus" class="set-step" title="增加">＋</button>
+            <span id="set-frost-val" class="set-val">8%</span>
+          </div>
+          <div class="settings-hint">调节玻璃磨砂浓度，数值越高越不透明</div>
+        </div>
+
+        <!-- 转码开关 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">转码 (Transcode)</span>
+            <button id="set-transcode-toggle" class="set-toggle">关闭</button>
+          </div>
+          <div class="settings-hint">关闭后启动时不加载原生 FFmpeg 引擎（节省内存）；开启后顶栏出现「转码」按钮，首次使用才加载</div>
+        </div>
+
+        <!-- 应用标题：自定义顶栏文字与音符标志 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">应用标题 (App Title)</span>
+          </div>
+          <div class="settings-row">
+            <input type="text" id="set-app-title" class="set-text-input" maxlength="24" placeholder="MusicPlayer-一切皆可自定" />
+          </div>
+          <div class="settings-row" style="margin-top:8px;">
+            <span class="set-label">显示音符标志</span>
+            <button id="set-logo-mark-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-hint">自定义顶栏左上角的名称，可单独关闭音符 🎵 标志</div>
+        </div>
+
+        <!-- 文字颜色：每区域一个取色器 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">文字颜色 (Text Color)</span>
+            <button id="set-color-reset" class="set-toggle active" title="恢复默认颜色">默认</button>
+          </div>
+          <div class="color-grid">
+            <label class="color-item">
+              <span>顶栏</span>
+              <input type="color" id="set-color-titlebar" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>歌曲列表</span>
+              <input type="color" id="set-color-playlist" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>主界面</span>
+              <input type="color" id="set-color-main" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>转码面板</span>
+              <input type="color" id="set-color-transcode" class="set-color" value="#111111" />
+            </label>
+            <label class="color-item">
+              <span>均衡器面板</span>
+              <input type="color" id="set-color-equalizer" class="set-color" value="#f1f0ff" />
+            </label>
+          </div>
+          <div class="settings-hint">为每个区域单独设置字体颜色，拖动即时预览</div>
+        </div>
+
+        <!-- 背景来源：4 选 1 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">背景来源 (Background)</span>
+          </div>
+          <div class="bg-source-grid">
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="live" checked />
+              <span>第三方动态壁纸</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="system" />
+              <span>系统静态壁纸</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="image" />
+              <span>自定义图片</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="solid" />
+              <span>自定义纯色</span>
+            </label>
+          </div>
+          <div id="bg-src-hint" class="settings-hint"></div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <span class="settings-version">v2.14.0</span>
+        <button id="set-reset" class="set-reset">恢复默认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 隐藏的文件输入 -->
+  <input type="file" id="file-input" accept="audio/*,.mp3,.flac,.wav,.ogg,.aac,.m4a,.opus,.webm,.wma,.ape,.aiff,.alac,.mp4,.3gp" multiple style="display:none" />
+  <input type="file" id="folder-input" webkitdirectory mozdirectory accept="audio/*" multiple style="display:none" />
+
+  <!-- 原生 Audio 元素 -->
+  <audio id="audio-engine" preload="auto"></audio>
+
+  <!-- FFmpeg.wasm：异步挂载，transcoder.js 等待就绪 -->
+  <script type="module">
+    // 优先 npmmirror，再回退 jsdelivr
+    const CDN_LIST = [
+      'https://cdn.npmmirror.com/packages/@ffmpeg/ffmpeg/0.12.15/files/dist/esm/index.js',
+      'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js',
+    ];
+    const UTIL_CDN_LIST = [
+      'https://cdn.npmmirror.com/packages/@ffmpeg/util/0.12.2/files/dist/esm/index.js',
+      'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js',
+    ];
+
+    async function tryImport(urls) {
+      for (const url of urls) {
+        try {
+          const mod = await import(url);
+          return mod;
+        } catch (e) {
+          console.warn('[FFmpeg] CDN failed:', url, e.message);
+        }
+      }
+      throw new Error('所有 CDN 均不可用，请检查网络');
+    }
+
+    try {
+      const [ffmpegMod, utilMod] = await Promise.all([
+        tryImport(CDN_LIST),
+        tryImport(UTIL_CDN_LIST),
+      ]);
+      window.FFmpegLib = {
+        FFmpeg: ffmpegMod.FFmpeg,
+        fetchFile: utilMod.fetchFile,
+        toBlobURL: utilMod.toBlobURL,
+      };
+      // 通知 transcoder.js 库已就绪
+      window.dispatchEvent(new CustomEvent('ffmpeglib-ready'));
+      console.log('[FFmpeg] 库已挂载到 window.FFmpegLib');
+    } catch (err) {
+      console.error('[FFmpeg] 库加载失败:', err.message);
+      window.FFmpegLibError = err.message;
+      window.dispatchEvent(new CustomEvent('ffmpeglib-error', { detail: err.message }));
+    }
+  </script>
+
+  <script src="player-equalizer.js"></script>
+  <script src="player.js"></script>
+  <script src="transcoder.js"></script>
+</body>
+</html>

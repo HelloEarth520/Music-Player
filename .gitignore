@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 构建产物
+android/app/build/
+android/.gradle/
+android/capacitor.node_modules/
+*.apk
+dist/
+
+# 原生/工具缓存
+android/local.properties
+.gradle/
+local.properties
+
+# 系统/编辑
+.DS_Store
+Thumbs.db
+*.log
+
+# 本地私有数据（不参与开源）
+data/
+secrets/
+
+# 打包产物 / 调试目录（不入库，安装包走 GitHub Release）
+*.zip
+_release/
+_repro/
+_backup_refactor/

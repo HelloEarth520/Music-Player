@@ -1,0 +1,33 @@
+MusicPlayer — 第三方开源库声明 (NOTICE)
+=============================================
+
+本项目自身以 MIT 协议开源（见 LICENSE）。
+以下为构建/运行所依赖的第三方开源库及其协议：
+
+1. Capacitor (core / android / cli) 8.3.1
+   - 协议：Apache License 2.0
+   - 版权：Capacitor 贡献者 (© The Capacitor Authors)
+   - 项目：https://github.com/ionic-team/capacitor
+
+2. AndroidX
+   - appcompat / coordinatorlayout / core-splashscreen 等
+   - 协议：Apache License 2.0
+   - 版权：The Android Open Source Project
+
+3. Electron 30.x  (开发/桌面端依赖)
+   - 协议：MIT
+   - 版权：OpenJS Foundation 及相关贡献者
+
+4. electron-builder 24.x  (打包工具，开发依赖)
+   - 协议：MIT
+   - 版权：electron-builder 贡献者
+
+5. archiver 7.x  (构建期打包，开发依赖)
+   - 协议：MIT
+   - 版权：archiver 贡献者
+
+说明：
+- 本项目完全离线运行，不收集、不上传任何用户数据。
+- 音频转码：当前 Web 层通过本地 FFmpeg.wasm 备选方案实现；
+  原生 ffmpeg-kit 因未从 Maven/JitPack 获取到 aar，暂未集成。
+- 本软件按「现状」提供，不作任何担保。任何修改/再分发版本由修改者自行负责。

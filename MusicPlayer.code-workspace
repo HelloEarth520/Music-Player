@@ -1,0 +1,29 @@
+{
+  "folders": [
+    { "path": "." }
+  ],
+  "settings": {
+    "editor.fontSize": 14,
+    "editor.tabSize": 2,
+    "editor.formatOnSave": true,
+    "editor.wordWrap": "on",
+    "workbench.colorTheme": "One Dark Pro",
+    "files.associations": {
+      "*.html": "html",
+      "*.css": "css",
+      "*.js": "javascript"
+    },
+    "liveServer.settings.port": 5500,
+    "liveServer.settings.donotShowInfoMsg": true,
+    "liveServer.settings.CustomBrowser": "chrome"
+  },
+  "extensions": {
+    "recommendations": [
+      "ritwickdey.liveserver",
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint",
+      "zhuangtongfa.material-theme",
+      "formulahendry.auto-rename-tag"
+    ]
+  }
+}

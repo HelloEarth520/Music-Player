@@ -1,0 +1,156 @@
+{
+  "name": "music-player",
+  "version": "2.14.0",
+  "description": "本地音乐播放器，支持多格式播放与 FFmpeg 转码",
+  "main": "main.js",
+  "author": {
+    "name": "MusicPlayer",
+    "email": "musicplayer@example.com"
+  },
+  "homepage": "https://github.com/your-username/music-player",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --win --x64",
+    "build:nsis": "electron-builder --win nsis --x64",
+    "build:portable": "electron-builder --win portable --x64",
+    "build:linux": "electron-builder --linux deb --x64"
+  },
+  "build": {
+    "appId": "com.musicplayer.app",
+    "productName": "MusicPlayer",
+    "copyright": "Copyright © 2026 MusicPlayer",
+    "directories": {
+      "output": "dist"
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "maintainer": "MusicPlayer <musicplayer@example.com>",
+      "category": "Audio",
+      "synopsis": "本地音乐播放器，支持多格式播放与 FFmpeg 转码"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "player.js",
+      "player-equalizer.js",
+      "transcoder.js",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "icon": "assets/icons/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "mp3",
+          "name": "MP3 音频",
+          "description": "MP3 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "flac",
+          "name": "FLAC 音频",
+          "description": "FLAC 无损音频",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "wav",
+          "name": "WAV 音频",
+          "description": "WAV 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "ogg",
+          "name": "OGG 音频",
+          "description": "OGG 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "aac",
+          "name": "AAC 音频",
+          "description": "AAC 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "m4a",
+          "name": "M4A 音频",
+          "description": "M4A 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "opus",
+          "name": "OPUS 音频",
+          "description": "OPUS 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "wma",
+          "name": "WMA 音频",
+          "description": "WMA 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        },
+        {
+          "ext": "aiff",
+          "name": "AIFF 音频",
+          "description": "AIFF 音频文件",
+          "icon": "assets/icons/icon.ico",
+          "role": "Editor"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MusicPlayer",
+      "installerIcon": "assets/icons/icon.ico",
+      "uninstallerIcon": "assets/icons/icon.ico",
+      "installerHeaderIcon": "assets/icons/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "perMachine": false,
+      "include": "installer.nsh"
+    },
+    "portable": {
+      "artifactName": "MusicPlayer-Portable-${version}.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/cli": "^8.3.1",
+    "@capacitor/core": "^8.3.1",
+    "archiver": "^7.0.1"
+  }
+}
