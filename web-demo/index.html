@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MusicPlayer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 背景内容层：动态模式下透明（透出第三方动态壁纸），
+       系统/图片/视频模式下承载对应背景 -->
+  <div id="bg" class="bg-layer"></div>
+
+  <div class="app">
+    <!-- 顶部标题栏 -->
+    <header class="titlebar">
+      <span class="logo">
+        <span id="logo-mark">🎵</span><span id="logo-text">MusicPlayer-一切皆可自定</span>
+      </span>
+      <span id="header-clock" class="header-clock">--:--:--</span>
+      <div class="header-actions">
+        <button id="btn-open-file" title="打开文件">📂 打开文件</button>
+        <button id="btn-open-folder" title="打开文件夹">📁 打开文件夹</button>
+        <button id="btn-transcode" class="btn-transcode-header" title="转码工具">⚙️ 转码</button>
+        <button id="btn-equalizer" class="btn-equalizer-header" title="均衡器">🎚️ 均衡器</button>
+        <button id="btn-settings" class="btn-settings-header" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- 左侧播放列表 -->
+      <aside class="playlist-panel">
+        <!-- 音乐目录列表 -->
+        <div class="dir-section">
+          <div class="dir-header">
+            <span>📂 音乐目录</span>
+            <button id="btn-add-dir" class="btn-add-dir" title="添加目录">＋</button>
+          </div>
+          <ul id="dir-list" class="dir-list"></ul>
+        </div>
+        <!-- 播放列表 -->
+        <div class="playlist-section">
+          <div class="playlist-header">
+            <span>🎵 播放列表</span>
+            <span id="track-count" class="track-count">0 首</span>
+          </div>
+          <ul id="playlist" class="playlist"></ul>
+        </div>
+      </aside>
+
+      <!-- 右侧播放器主体 -->
+      <main class="player-main">
+        <!-- 封面区域：半透明液态玻璃圆，映射背景 -->
+        <div class="cover-wrapper">
+          <div id="cover" class="cover spinning-paused">
+            <span id="cover-icon" class="cover-icon">
+              <svg viewBox="0 0 24 24" width="52" height="52" fill="currentColor" aria-hidden="true">
+                <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/>
+              </svg>
+            </span>
+          </div>
+        </div>
+
+        <!-- 歌曲信息 -->
+        <div class="track-info">
+          <div id="track-title" class="track-title">未选择音乐</div>
+          <div id="track-artist" class="track-artist">--</div>
+          <div id="track-format" class="track-format"></div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="progress-section">
+          <span id="current-time" class="time">0:00</span>
+          <div class="progress-bar-wrap" id="progress-bar-wrap">
+            <div id="progress-bar" class="progress-bar">
+              <div id="progress-fill" class="progress-fill"></div>
+              <div id="progress-thumb" class="progress-thumb"></div>
+            </div>
+          </div>
+          <span id="total-time" class="time">0:00</span>
+        </div>
+
+        <!-- 音量控制 -->
+        <div class="volume-section">
+          <span id="vol-icon" class="vol-icon">🔊</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" class="volume-slider" />
+          <span id="vol-value">80%</span>
+        </div>
+
+        <!-- 控制按钮（纯 SVG 图标，无表情） -->
+        <div class="controls">
+          <!-- 上一首 -->
+          <button id="btn-prev" class="ctrl-btn" title="上一首">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <polygon points="18,4 18,20 6,12"/>
+              <rect x="5" y="4" width="2" height="16" rx="1"/>
+            </svg>
+          </button>
+
+          <!-- 播放/暂停 -->
+          <button id="btn-play" class="ctrl-btn play-btn" title="播放/暂停">
+            <svg id="play-icon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor">
+              <polygon points="7,3 21,12 7,21"/>
+            </svg>
+            <svg id="pause-icon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor" style="display:none">
+              <rect x="5" y="3" width="5" height="18" rx="1.5"/>
+              <rect x="14" y="3" width="5" height="18" rx="1.5"/>
+            </svg>
+          </button>
+
+          <!-- 下一首 -->
+          <button id="btn-next" class="ctrl-btn" title="下一首">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <polygon points="6,4 6,20 18,12"/>
+              <rect x="17" y="4" width="2" height="16" rx="1"/>
+            </svg>
+          </button>
+
+          <!-- 分隔 -->
+          <div class="mode-divider"></div>
+
+          <!-- 播放模式：单曲循环 / 列表循环 / 随机 -->
+          <div class="mode-group">
+            <button id="btn-mode-repeatOne" class="mode-btn" title="单曲循环" data-mode="repeatOne">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17,1 21,5 17,9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7,23 3,19 7,15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+              </svg>
+            </button>
+            <button id="btn-mode-repeat" class="mode-btn active" title="列表循环" data-mode="repeat">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="17,1 21,5 17,9"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7,23 3,19 7,15"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+            </button>
+            <button id="btn-mode-shuffle" class="mode-btn" title="随机播放" data-mode="shuffle">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16,3 21,3 21,8"/>
+                <line x1="4" y1="20" x2="21" y2="3"/>
+                <polyline points="21,16 21,21 16,21"/>
+                <line x1="15" y1="15" x2="21" y2="21"/>
+                <line x1="4" y1="4" x2="9" y2="9"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 支持格式提示 -->
+        <div class="format-hint">
+          支持格式：MP3 · FLAC · WAV · OGG · AAC · M4A · OPUS · WebM · WMA · APE（部分）
+          &nbsp;|&nbsp; 内置 FFmpeg 转码引擎
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ===================== 均衡器面板 Modal ===================== -->
+  <div id="equalizer-overlay" class="equalizer-overlay hidden">
+    <div class="equalizer-modal">
+      <div class="equalizer-header">
+        <span class="equalizer-title">🎚️ 均衡器</span>
+        <button id="btn-close-equalizer" class="btn-close">✕</button>
+      </div>
+
+      <div class="equalizer-body">
+        <div class="eq-controls-row">
+          <button id="btn-eq-toggle" class="eq-toggle active">开启</button>
+          <select id="eq-preset" class="eq-preset">
+            <option value="flat">默认 (Flat)</option>
+            <option value="bass">重低音 (Bass)</option>
+            <option value="vocal">人声 (Vocal)</option>
+            <option value="treble">高音 (Treble)</option>
+            <option value="electronic">电子 (Electronic)</option>
+            <option value="rock">摇滚 (Rock)</option>
+            <option value="jazz">爵士 (Jazz)</option>
+            <option value="classical">古典 (Classical)</option>
+            <option value="pop">流行 (Pop)</option>
+          </select>
+        </div>
+
+        <div class="eq-bands-container">
+          <!-- 10段均衡器滑块 -->
+          <div class="eq-band" data-freq="32" data-index="0">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">32Hz</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="64" data-index="1">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">64Hz</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="125" data-index="2">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">125</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="250" data-index="3">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">250</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="500" data-index="4">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">500</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="1k" data-index="5">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">1k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="2k" data-index="6">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">2k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="4k" data-index="7">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">4k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="8k" data-index="8">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">8k</span>
+            <span class="eq-db">0</span>
+          </div>
+          <div class="eq-band" data-freq="16k" data-index="9">
+            <input type="range" min="-12" max="12" value="0" step="1" class="eq-slider-vertical">
+            <span class="eq-freq">16k</span>
+            <span class="eq-db">0</span>
+          </div>
+        </div>
+
+        <div class="eq-visualizer">
+          <canvas id="eq-canvas" width="800" height="160"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 转码面板 Modal ===================== -->
+  <div id="transcode-overlay" class="transcode-overlay hidden">
+    <div class="transcode-modal">
+      <div class="transcode-header">
+        <span class="transcode-title">⚙️ FFmpeg 转码工具</span>
+        <button id="btn-close-transcode" class="btn-close">✕</button>
+      </div>
+
+      <!-- FFmpeg 加载状态 -->
+      <div id="ffmpeg-status" class="ffmpeg-status loading">
+        <span class="status-dot"></span>
+        <span id="ffmpeg-status-text">FFmpeg 引擎未加载，点击下方按钮初始化...</span>
+        <button id="btn-load-ffmpeg" class="btn-load-ffmpeg">🚀 加载 FFmpeg</button>
+      </div>
+
+      <div class="transcode-body">
+        <!-- 左：输入文件 -->
+        <div class="tc-section">
+          <div class="tc-label">① 选择源文件</div>
+          <div class="tc-drop-zone" id="tc-drop-zone">
+            <div class="tc-drop-icon">🎵</div>
+            <div class="tc-drop-text">拖拽音频文件到此处<br>或点击选择</div>
+            <input type="file" id="tc-file-input"
+              accept="audio/*,.mp3,.flac,.wav,.ogg,.aac,.m4a,.opus,.webm,.wma,.ape,.aiff"
+              multiple style="display:none" />
+          </div>
+          <!-- 源文件列表 -->
+          <ul id="tc-file-list" class="tc-file-list"></ul>
+        </div>
+
+        <!-- 右：转码参数 -->
+        <div class="tc-section">
+          <div class="tc-label">② 转码参数</div>
+
+          <div class="tc-form">
+            <div class="tc-row">
+              <label>输出格式</label>
+              <select id="tc-format">
+                <option value="mp3">MP3</option>
+                <option value="flac">FLAC（无损）</option>
+                <option value="wav">WAV（无损）</option>
+                <option value="ogg">OGG Vorbis</option>
+                <option value="aac">AAC</option>
+                <option value="opus">OPUS</option>
+                <option value="m4a">M4A</option>
+              </select>
+            </div>
+
+            <div class="tc-row" id="row-bitrate">
+              <label>比特率</label>
+              <select id="tc-bitrate">
+                <option value="64k">64 kbps（省流）</option>
+                <option value="128k">128 kbps</option>
+                <option value="192k" selected>192 kbps（推荐）</option>
+                <option value="256k">256 kbps（高质量）</option>
+                <option value="320k">320 kbps（最高）</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>采样率</label>
+              <select id="tc-samplerate">
+                <option value="22050">22050 Hz</option>
+                <option value="44100" selected>44100 Hz（CD）</option>
+                <option value="48000">48000 Hz（专业）</option>
+                <option value="96000">96000 Hz（Hi-Res）</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>声道</label>
+              <select id="tc-channels">
+                <option value="1">单声道</option>
+                <option value="2" selected>立体声</option>
+              </select>
+            </div>
+
+            <div class="tc-row">
+              <label>音量调整</label>
+              <input type="number" id="tc-volume" value="0" min="-30" max="30" step="1" class="tc-input-num" />
+              <span class="tc-unit">dB</span>
+            </div>
+
+            <div class="tc-row">
+              <label>速度调整</label>
+              <input type="number" id="tc-speed" value="1.0" min="0.5" max="2.0" step="0.1" class="tc-input-num" />
+              <span class="tc-unit">×</span>
+            </div>
+          </div>
+
+          <!-- 转码按钮 -->
+          <button id="btn-start-transcode" class="btn-start-transcode" disabled>
+            ⚙️ 开始转码
+          </button>
+        </div>
+      </div>
+
+      <!-- 转码任务队列 -->
+      <div class="tc-tasks-section">
+        <div class="tc-label">③ 转码队列</div>
+        <div id="tc-tasks" class="tc-tasks">
+          <div class="tc-empty">暂无转码任务</div>
+        </div>
+        <!-- 批量导出按钮 -->
+        <div id="tc-batch-actions" class="tc-batch-actions hidden">
+          <button id="btn-batch-export" class="btn-batch-export">⬇️ 批量导出全部</button>
+          <span id="tc-batch-count" class="tc-batch-count"></span>
+        </div>
+      </div>
+
+      <!-- 进度日志 -->
+      <div id="tc-log" class="tc-log hidden"></div>
+    </div>
+  </div>
+
+  <!-- ===================== 首开页1：用户协议 ===================== -->
+  <div id="agreement-overlay" class="agreement-overlay hidden">
+    <div class="agreement-box">
+      <h1 class="agreement-title">用户协议与隐私声明</h1>
+      <div class="agreement-body">
+        <p class="agree-lead">本项目由 <b>AI 生成并构建打包</b>。使用前请阅读以下条款：</p>
+
+        <h2>一、软件性质</h2>
+        <p>本软件为<b>本地音乐播放器</b>，完全离线运行，<b>无需联网</b>，不收集、不上传任何用户数据。</p>
+
+        <h2>二、测试环境</h2>
+        <p>本软件的测试环境为 <b>VIVO 手机</b> 与 <b>VIVO 平板</b>。其他设备不做可用性保证，可能出现布局错乱、功能异常或无法运行。</p>
+
+        <h2>三、第三方开源库</h2>
+        <p>本软件基于以下开源库构建（各自遵循其许可协议）：Capacitor（Apache-2.0）、AndroidX（Apache-2.0）、Electron（MIT）、archiver（MIT）等。本软件自身以 MIT 协议开源。</p>
+
+        <h2>四、数据存储</h2>
+        <p>软件产生的数据（设置、背景选择、媒体引用等）仅保存在<b>本机</b>（应用私有目录或您指定的目录），绝不上传任何服务器。</p>
+
+        <h2>五、权限说明</h2>
+        <p>仅在使用相关功能时请求必要权限：读取音乐/壁纸文件、可选的存储目录权限。不请求与播放无关的任何权限。</p>
+
+        <h2>六、修改与再分发（免责）</h2>
+        <p>本软件按「现状」提供，不作任何明示或暗示担保。任何第三方对本软件进行的<b>修改、二次开发、重新分发版本</b>，均由修改者自行负责，原作者不承担任何责任，亦不认可或背书任何修改版本。</p>
+        <p>即便使用本软件公开源码<b>自行编译、打包</b>的未修改版本，因编译环境、工具链、设备差异等导致的任何问题，亦由使用者自行承担，原作者不保证其可用、不就此负责。</p>
+        <p>因使用本软件（含任何修改版本、自行打包版本）产生的任何纠纷、损失、数据损坏或法律责任，均由使用者自行承担，原作者免责。</p>
+        <p>二次分发须保留原始许可与第三方库声明。</p>
+      </div>
+      <div class="agreement-footer">
+        <button id="btn-agree" class="agree-btn agree">同意并继续</button>
+        <button id="btn-disagree" class="agree-btn disagree">拒绝并退出</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 首开页2：数据保存目录 ===================== -->
+  <div id="datafolder-overlay" class="datafolder-overlay hidden">
+    <div class="datafolder-box">
+      <h1 class="datafolder-title">请选择数据保存位置</h1>
+      <p class="datafolder-sub">此位置用于保存设置与背景媒体。后续可更改。</p>
+      <div class="df-options">
+        <label class="df-option">
+          <input type="radio" name="df" value="private" checked />
+          <span class="df-opt-title">应用私有目录</span>
+          <span class="df-opt-desc">Android/data/com.musicplayer.app/ — 免额外权限，卸载即清除</span>
+        </label>
+        <label class="df-option">
+          <input type="radio" name="df" value="download" />
+          <span class="df-opt-title">系统 Download 文件夹</span>
+          <span class="df-opt-desc">通用易管理，首次需授权</span>
+        </label>
+        <label class="df-option">
+          <input type="radio" name="df" value="appfolder" />
+          <span class="df-opt-title">新建 MusicPlayer 文件夹</span>
+          <span class="df-opt-desc">内部存储/MusicPlayer/ — 便于管理</span>
+        </label>
+        <label class="df-option">
+          <input type="radio" name="df" value="custom" />
+          <span class="df-opt-title">自定义文件夹</span>
+          <span class="df-opt-desc">用系统选择器任意指定（SAF）</span>
+        </label>
+      </div>
+      <div id="df-custom-row" class="df-custom-row" style="display:none">
+        <button type="button" id="btn-df-pick" class="df-pick-btn">点击选择文件夹</button>
+        <span id="df-custom-name" class="df-custom-name"></span>
+      </div>
+      <div class="datafolder-footer">
+        <button id="btn-df-confirm" class="df-btn confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 图片裁剪弹窗（背景来源=图片） ===================== -->
+  <div id="crop-overlay" class="crop-overlay hidden">
+    <div class="crop-box">
+      <div class="crop-head">选择背景图片区域</div>
+      <div class="crop-stage" id="crop-stage">
+        <img id="crop-img" class="crop-img" alt="" />
+        <div class="crop-frame" id="crop-frame">
+          <div class="crop-handle" id="crop-handle"></div>
+        </div>
+      </div>
+      <div class="crop-tip" id="crop-tip">拖动方框移动位置，拖动右下角圆点可缩放（锁定屏幕比例，能拉大也能拉小）</div>
+      <div class="crop-footer">
+        <button id="btn-crop-cancel" class="crop-btn cancel">取消</button>
+        <button id="btn-crop-ok" class="crop-btn ok">裁切并使用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 设置面板 Modal ===================== -->
+  <div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-modal glass">
+      <div class="settings-header">
+        <span class="settings-title">⚙️ 外观设置</span>
+        <button id="btn-close-settings" class="btn-close">✕</button>
+      </div>
+
+      <div class="settings-body">
+        <!-- 模糊 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">模糊 (Blur)</span>
+            <button id="set-blur-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <input type="range" id="set-blur-slider" min="0" max="40" value="10" step="1" class="set-slider" />
+            <span id="set-blur-val" class="set-val">10px</span>
+          </div>
+          <div class="settings-hint">关闭后界面完全透明，仅显示动态壁纸</div>
+        </div>
+
+        <!-- 毛玻璃 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">毛玻璃 (Frosted Glass)</span>
+            <button id="set-frost-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <button id="set-frost-minus" class="set-step" title="减少">−</button>
+            <input type="range" id="set-frost-slider" min="0" max="100" value="8" step="1" class="set-slider" />
+            <button id="set-frost-plus" class="set-step" title="增加">＋</button>
+            <span id="set-frost-val" class="set-val">8%</span>
+          </div>
+          <div class="settings-hint">调节玻璃磨砂浓度，数值越高越不透明</div>
+        </div>
+
+        <!-- 应用标题：自定义顶栏文字与音符标志 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">应用标题 (App Title)</span>
+          </div>
+          <div class="settings-row">
+            <input type="text" id="set-app-title" class="set-text-input" maxlength="24" placeholder="MusicPlayer-一切皆可自定" />
+          </div>
+          <div class="settings-row" style="margin-top:8px;">
+            <span class="set-label">显示音符标志</span>
+            <button id="set-logo-mark-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-hint">自定义顶栏左上角的名称，可单独关闭音符 🎵 标志</div>
+        </div>
+
+        <!-- 文字颜色：每区域一个取色器 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">文字颜色 (Text Color)</span>
+            <button id="set-color-reset" class="set-toggle active" title="恢复默认颜色">默认</button>
+          </div>
+          <div class="color-grid">
+            <label class="color-item">
+              <span>顶栏</span>
+              <input type="color" id="set-color-titlebar" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>歌曲列表</span>
+              <input type="color" id="set-color-playlist" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>主界面</span>
+              <input type="color" id="set-color-main" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>转码面板</span>
+              <input type="color" id="set-color-transcode" class="set-color" value="#f1f0ff" />
+            </label>
+            <label class="color-item">
+              <span>均衡器面板</span>
+              <input type="color" id="set-color-equalizer" class="set-color" value="#f1f0ff" />
+            </label>
+          </div>
+          <div class="settings-hint">为每个区域单独设置字体颜色，拖动即时预览</div>
+        </div>
+
+        <!-- 背景来源：4 选 1 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">背景来源 (Background)</span>
+          </div>
+          <div class="bg-source-grid">
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="live" checked />
+              <span>第三方动态壁纸</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="system" />
+              <span>系统静态壁纸</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="image" />
+              <span>自定义图片</span>
+            </label>
+            <label class="bg-src-item">
+              <input type="radio" name="bgsrc" value="solid" />
+              <span>纯色图片</span>
+            </label>
+          </div>
+          <div id="bg-src-hint" class="settings-hint"></div>
+        </div>
+      </div>
+
+      <div class="settings-footer">
+        <span class="settings-version">v2.14.0</span>
+        <button id="set-reset" class="set-reset">恢复默认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 纯色背景选择（应用内透明菜单） ===================== -->
+  <div id="solid-color-overlay" class="solid-color-overlay hidden">
+    <div class="solid-color-panel">
+      <div class="solid-color-head">
+        <span>选择纯色背景</span>
+        <button id="solid-color-close" class="solid-color-close" title="关闭">✕</button>
+      </div>
+      <div class="solid-color-sub">标准色</div>
+      <div class="solid-color-grid" id="solid-standard"></div>
+      <div class="solid-color-sub">柔光版（不刺眼）</div>
+      <div class="solid-color-grid" id="solid-soft"></div>
+    </div>
+  </div>
+
+  <!-- 隐藏的文件输入 -->
+  <input type="file" id="file-input" accept="audio/*,.mp3,.flac,.wav,.ogg,.aac,.m4a,.opus,.webm,.wma,.ape,.aiff,.alac,.mp4,.3gp" multiple style="display:none" />
+  <input type="file" id="folder-input" webkitdirectory mozdirectory accept="audio/*" multiple style="display:none" />
+
+  <!-- 原生 Audio 元素 -->
+  <audio id="audio-engine" preload="auto"></audio>
+
+  <!-- 体验版：仅界面展示，所有按钮不调用真实功能 -->
+  <script src="demo.js"></script>
+
+  <!-- 底部霓虹免责声明（始终位于网页最下方） -->
+  <footer class="disclaimer" id="disclaimer">网页仅供参考，网页不代表应用实际功能！！！</footer>
+</body>
+</html>

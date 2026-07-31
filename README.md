@@ -1,0 +1,81 @@
+# 🎵 MusicPlayer
+
+> 一个基于 Web 技术的本地音乐播放器，彩色渐变极简风格。
+
+## 📁 项目结构
+
+```
+D:\MusicPlayer\
+├── index.html              # 主页面
+├── style.css               # 渐变极简样式
+├── player.js               # 播放逻辑
+├── set-default.bat         # 设置默认应用脚本
+├── MusicPlayer.code-workspace  # VSCode 工作区
+├── .vscode/
+│   └── launch.json         # 调试配置
+└── assets/
+    ├── icons/
+    └── covers/
+```
+
+## 🎵 支持格式
+
+| 格式   | 状态         | 说明               |
+|--------|--------------|---------------------|
+| MP3    | ✅ 完全支持  | 最通用格式          |
+| FLAC   | ✅ 完全支持  | 无损，Chrome 支持   |
+| WAV    | ✅ 完全支持  | 无损原始音频        |
+| OGG    | ✅ 完全支持  | 开源格式            |
+| AAC    | ✅ 完全支持  | Apple 无损          |
+| M4A    | ✅ 完全支持  | iTunes 格式         |
+| OPUS   | ✅ 完全支持  | 现代高压缩格式      |
+| WebM   | ✅ 完全支持  | Chrome 原生支持     |
+| WMA    | ⚠️ 部分支持  | 需要系统解码器      |
+| APE    | ⚠️ 部分支持  | 需要额外支持        |
+| AIFF   | ✅ 完全支持  | Mac 无损格式        |
+
+## 🚀 快速开始
+
+### 方式一：VSCode + Live Server（推荐开发）
+1. 用 VSCode 打开工作区：双击 `MusicPlayer.code-workspace`
+2. 安装推荐插件：`Ctrl+Shift+X` → 搜索 Live Server 安装
+3. 右键 `index.html` → **Open with Live Server**
+4. 浏览器自动打开播放器
+
+### 方式二：直接用浏览器打开
+1. 用 Chrome/Edge 打开 `index.html`
+2. 点击"📂 打开文件"或拖拽音乐文件到窗口
+
+### 方式三：设置默认播放器
+1. 以管理员身份运行 `set-default.bat`
+2. 或手动右键 MP3 → 打开方式 → Chrome → 始终使用
+
+## ⌨️ 键盘快捷键
+
+| 快捷键       | 功能         |
+|-------------|--------------|
+| `Space`     | 播放/暂停     |
+| `←` / `→`  | 快退/快进 5s  |
+| `↑` / `↓`  | 音量加减      |
+| `N`         | 下一首        |
+| `P`         | 上一首        |
+| `M`         | 切换循环模式  |
+
+## 🎨 功能特性
+
+- 🎨 **动态背景** — 根据当前曲目自动切换渐变氛围色
+- 📀 **旋转封面** — 播放时封面黑胶旋转，暂停时停止
+- 📂 **文件夹导入** — 一键导入整个音乐文件夹
+- 🔀 **随机播放** — 智能随机，不重复
+- 🔁 **三种循环** — 顺序 / 列表循环 / 单曲循环
+- 🖱️ **拖拽支持** — 直接拖拽文件到窗口
+- ⚠️ **格式检测** — 不支持的格式会在列表中标注
+
+## 📦 VSCode 推荐插件
+
+在 VSCode 中按 `Ctrl+Shift+P` → 输入 `Show Recommended Extensions`：
+
+- **Live Server** — 实时预览，保存即刷新
+- **Prettier** — 代码自动格式化
+- **ESLint** — JavaScript 语法检查
+- **Auto Rename Tag** — HTML 标签自动同步重命名
