@@ -371,6 +371,33 @@ window.AndroidDirectoryPicker = {
       bytes[i] = raw.charCodeAt(i);
     }
     return bytes;
+  },
+
+  /**
+   * 把 SAF 文件拷到应用缓存并返回同源可播放 URL（大文件不进内存，避免 OOM）
+   * @param {string} treeUri - 目录的 content:// URI
+   * @param {string} documentId - 文件的 documentId
+   * @param {string} [ext] - 文件扩展名（含点，如 ".mp3"），用于 MIME 嗅探
+   * @returns {{ url: string, path: string, size: number }}
+   */
+  async getPlayableFile(treeUri, documentId, ext) {
+    if (!this.plugin) await this.init();
+    if (!this.plugin) throw new Error('DirectoryPicker 插件不可用');
+    const result = await this.plugin.getPlayableFile({ treeUri, documentId, ext: ext || '' });
+    return result; // { url, path, size }
+  },
+
+  /**
+   * 读取同目录小文本文件（.lrc 歌词等）
+   * @param {string} treeUri - 目录的 content:// URI
+   * @param {string} documentId - 文件的 documentId
+   * @returns {string} 文件文本内容（UTF-8）
+   */
+  async readTextFile(treeUri, documentId) {
+    if (!this.plugin) await this.init();
+    if (!this.plugin) throw new Error('DirectoryPicker 插件不可用');
+    const result = await this.plugin.readTextFile({ treeUri, documentId });
+    return result.text || '';
   }
 };
 

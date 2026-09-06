@@ -174,6 +174,8 @@ const modeBtnRepeat    = $('btn-mode-repeat');
 const modeBtnShuffle   = $('btn-mode-shuffle');
 const coverImg      = $('cover-img');
 const coverIcon     = $('cover-icon');
+const lyricSection  = $('lyric-section');
+const lyricRows     = lyricSection ? lyricSection.querySelectorAll('.lyric-row') : [];
 const playlistEl    = $('playlist');
 const trackCount    = $('track-count');
 const fileInput     = $('file-input');
@@ -450,6 +452,9 @@ function loadSafFiles(safFiles, treeUri) {
       _isSafFile: true,
       _safTreeUri: f._treeUri || treeUri,
       _safDocumentId: f.documentId,
+      // 同目录兄弟文件（Java 端匹配好）：.lrc 歌词 / 封面图
+      _lyricDocId: f._lyricDocId || null,
+      _coverDocId: f._coverDocId || null,
     });
   }
 
@@ -551,6 +556,8 @@ function playAt(index) {
   
   // 重置封面为默认渐变
   setCoverArt(null, track.color);
+  // 切歌瞬间清空歌词，避免上一首残留；新歌词由 loadLyrics 异步加载
+  resetLyricDisplay();
   
   // 内存管理：确保当前歌曲有 URL
   ensureTrackURL(index);
@@ -576,13 +583,16 @@ function playAt(index) {
     preloadMetadata(index);
     renderPlaylist();
 
-    // SAF 文件：通过 content:// URI 读取并生成 ObjectURL
+    // SAF 文件：流式拷贝到缓存，拿同源 https 虚拟路径播放（不整文件读入内存，根治大文件 OOM）
     (async () => {
       try {
-        const bytes = await window.AndroidDirectoryPicker.readFile(track._safTreeUri, track._safDocumentId);
-        const blob = new Blob([bytes]);
-        track.url = URL.createObjectURL(blob);
-        audio.src = track.url;
+        const res = await window.AndroidDirectoryPicker.getPlayableFile(track._safTreeUri, track._safDocumentId, track.ext);
+        track.url = res.url;
+        // 关键：以 CORS 模式加载（crossOrigin 必须在设 src 前）。否则 <audio> 按 no-cors
+        // 拉取 saf.local 音频，接入均衡器(Web Audio)的 MediaElementAudioSource 输出会被
+        // 浏览器规范强制置零 → 进度条/时长正常但完全没声音。
+        audio.crossOrigin = 'anonymous';
+        audio.src = res.url;
         audio.volume = parseFloat(volumeSlider.value);
         audio.play().then(() => {
           state.isPlaying = true;
@@ -590,21 +600,20 @@ function playAt(index) {
           startCoverSpin();
           updateBgColor(track.color);
         }).catch(err => console.warn('播放失败:', err));
-        
-        // SAF 文件：尝试提取专辑封面
-        extractAlbumArt(blob, track.ext).then(covUrl => {
-          if (covUrl) {
-            track._coverUrl = covUrl;
-            setCoverArt(covUrl, track.color);
-          }
-        });
+
+        // SAF 封面：优先同目录封面图（B-*.jpg），其次音频内嵌封面
+        loadSafCover(track);
+        // SAF 歌词：读取同目录 .lrc 并显示
+        loadLyrics(track);
       } catch(e) {
-        console.error('[SAF] 读取文件失败:', e);
+        console.error('[SAF] 获取播放文件失败:', e);
       }
     })();
     return;
   }
   
+  // 非 SAF 播放：恢复默认 no-cors，避免上一个 SAF 源的 anonymous 设置残留影响本地文件
+  audio.crossOrigin = null;
   audio.src = track.url;
   audio.volume = parseFloat(volumeSlider.value);
   
@@ -850,14 +859,131 @@ function extractFLACCover(data) {
 }
 
 /**
- * 设置封面显示：有专辑封面则显示图片，否则显示默认渐变
- * 同时提取封面主色，驱动毛玻璃动态背景
+ * 设置封面显示：封面旋转开启且有封面图 → 显示图片并随 .cover 旋转；
+ * 否则显示音符标志。color 参数保留（历史调用方传入），不在此驱动背景。
  */
 function setCoverArt(imageUrl, color) {
-  // 不再显示专辑封面图片，统一用半透明液态玻璃圆映射背景。
-  // 样式全部交给 CSS（.cover），这里不再覆盖 background。
-  if (coverImg) { coverImg.style.display = 'none'; coverImg.src = ''; }
-  if (coverIcon) coverIcon.style.display = 'inline';
+  const show = appSettings.coverRotEnabled && !!imageUrl;
+  if (coverImg) {
+    if (show) {
+      coverImg.src = imageUrl;
+      coverImg.style.display = '';
+    } else {
+      coverImg.style.display = 'none';
+      coverImg.src = '';
+    }
+  }
+  if (coverIcon) coverIcon.style.display = show ? 'none' : 'inline';
+}
+
+/**
+ * 加载 SAF 歌曲封面：优先同目录封面图（网易云导出 B-*.jpg，Java 端已匹配 _coverDocId），
+ * 无则回退从音频流提取内嵌封面。
+ */
+async function loadSafCover(track) {
+  try {
+    if (track._coverDocId && window.AndroidDirectoryPicker) {
+      const img = await window.AndroidDirectoryPicker.getPlayableFile(track._safTreeUri, track._coverDocId, '');
+      if (img && img.url) {
+        track._coverUrl = img.url;
+        if (state.playlist[state.currentIndex] === track) setCoverArt(img.url, track.color);
+        return;
+      }
+    }
+    // 回退：内嵌封面（fetch 同源虚拟路径可跨域，Java 端已带 ACAO 头）
+    if (track.url && window.AndroidDirectoryPicker) {
+      const blob = await (await fetch(track.url)).blob();
+      const covUrl = await extractAlbumArt(blob, track.ext);
+      if (covUrl) {
+        track._coverUrl = covUrl;
+        if (state.playlist[state.currentIndex] === track) setCoverArt(covUrl, track.color);
+      }
+    }
+  } catch (e) { /* 封面失败静默，保持音符 */ }
+}
+
+// =============================================================
+// 歌词（.lrc）：最近 5 行（当前句 + 前后各 2 行），随播放滚动
+// =============================================================
+
+/** 解析 LRC 文本 → [{ time: 秒, text }] 按时间升序 */
+function parseLRC(text) {
+  const out = [];
+  if (!text) return out;
+  const lineRe = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  for (const raw of text.split(/\r?\n/)) {
+    const content = raw.replace(lineRe, '').trim();
+    if (!content) continue;
+    let m;
+    lineRe.lastIndex = 0;
+    while ((m = lineRe.exec(raw)) !== null) {
+      const min = parseInt(m[1], 10);
+      const sec = parseInt(m[2], 10);
+      const fracStr = m[3] || '';
+      let frac = 0;
+      if (fracStr) frac = fracStr.length >= 3 ? parseInt(fracStr, 10) / 1000 : parseInt(fracStr, 10) / 100;
+      out.push({ time: min * 60 + sec + frac, text: content });
+    }
+  }
+  out.sort((a, b) => a.time - b.time);
+  return out;
+}
+
+/** 隐藏歌词区并清空 5 行（切歌/无歌词时调用） */
+function resetLyricDisplay() {
+  if (!lyricRows.length) return;
+  for (const row of lyricRows) row.textContent = '';
+  if (lyricSection) lyricSection.classList.add('hidden');
+}
+
+/**
+ * 渲染当前时间的歌词窗口：当前句 + 前后各 2 行。
+ * 无歌词/开关关闭 → 隐藏。
+ */
+function renderLyricWindow(track, time) {
+  if (!lyricRows.length) return;
+  const lrc = track && Array.isArray(track._lrc) ? track._lrc : null;
+  if (!appSettings.lyricEnabled || !lrc || lrc.length === 0) {
+    resetLyricDisplay();
+    return;
+  }
+  // 当前行 = 最后一个 time <= 当前播放时间
+  let cur = 0;
+  for (let i = 0; i < lrc.length; i++) {
+    if (lrc[i].time <= time) cur = i; else break;
+  }
+  const start = cur - 2;
+  // 防抖：当前窗口未变则不重绘（timeupdate 约 4Hz）
+  if (track._lrcWinStart === start) return;
+  track._lrcWinStart = start;
+  lyricRows.forEach((row, off) => {
+    const idx = start + off;
+    if (idx >= 0 && idx < lrc.length) {
+      row.textContent = lrc[idx].text;
+    } else {
+      row.textContent = '';
+    }
+    row.classList.toggle('lyric-active', off === 2 && idx >= 0 && idx < lrc.length);
+  });
+  if (lyricSection) lyricSection.classList.remove('hidden');
+}
+
+/** 加载当前 SAF 歌曲的同目录 .lrc 歌词（异步，带切歌竞态保护） */
+async function loadLyrics(track) {
+  if (!appSettings.lyricEnabled || !track._lyricDocId || !window.AndroidDirectoryPicker) {
+    track._lrc = [];
+    resetLyricDisplay();
+    return;
+  }
+  try {
+    const text = await window.AndroidDirectoryPicker.readTextFile(track._safTreeUri, track._lyricDocId);
+    track._lrc = parseLRC(text);
+  } catch (e) {
+    track._lrc = [];
+  }
+  // 竞态保护：若期间已切歌则丢弃
+  if (state.playlist[state.currentIndex] !== track) return;
+  renderLyricWindow(track, audio.currentTime || 0);
 }
 
 // =====================================================
@@ -997,6 +1123,14 @@ audio.addEventListener('timeupdate', () => {
   progressFill.style.width = `${pct}%`;
   progressThumb.style.left = `${pct}%`;
   currentTime.textContent = formatTime(audio.currentTime);
+});
+
+// 歌词随播放进度滚动（当前句 + 前后 2 行）
+audio.addEventListener('timeupdate', () => {
+  const t = state.playlist[state.currentIndex];
+  if (t && t._lrc && appSettings.lyricEnabled) {
+    renderLyricWindow(t, audio.currentTime);
+  }
 });
 
 audio.addEventListener('loadedmetadata', () => {
@@ -1408,6 +1542,11 @@ const SETTINGS_DEFAULT = {
   frostOn: true, frostPct: 18,
   eqEnabled: true,   // 均衡器开关：true=启动即加载 AudioContext；false=启动不加载（首次打开面板再懒加载）
   transcodeEnabled: false, // 转码开关：false=启动不初始化原生 FFmpeg（不占内存）；true=启用后懒加载
+  coverRotEnabled: true,   // 封面旋转：true=封面圆显示歌曲同目录封面图并随播放旋转；false=保持音符标志
+  lyricEnabled: true,      // 歌词显示开关（同目录 .lrc）
+  lyricFontSize: 15,       // 歌词字号 px
+  lyricColor: '#ffffff',   // 歌词颜色（默认白色，透明设计）
+  lyricRainbow: false,     // 炫彩流逝样式（当前行渐变色流动）
   appTitle: 'MusicPlayer-一切皆可自定',  // 顶栏左上角自定义文字
   showLogoMark: true,       // 是否显示音符 🎵 标志
   colorTitlebar: '#f1f0ff',
@@ -1441,6 +1580,9 @@ function applySettings() {
   root.setProperty('--text-main', appSettings.colorMain);
   root.setProperty('--text-transcode', appSettings.colorTranscode);
   root.setProperty('--text-equalizer', appSettings.colorEqualizer);
+  root.setProperty('--lyric-size', (appSettings.lyricFontSize || 15) + 'px');
+  root.setProperty('--lyric-color', appSettings.lyricColor || '#ffffff');
+  if (lyricSection) lyricSection.classList.toggle('rainbow', !!(appSettings.lyricEnabled && appSettings.lyricRainbow));
   applyAppTitle();
 }
 
@@ -1588,14 +1730,67 @@ function bindSettingsEvents() {
   };
   tcToggle?.addEventListener('click', () => { appSettings.transcodeEnabled = !appSettings.transcodeEnabled; refreshTranscode(); });
 
+  // 封面旋转开关
+  const coverRotToggle = document.getElementById('set-cover-rot-toggle');
+  const refreshCoverRot = () => {
+    if (coverRotToggle) {
+      coverRotToggle.classList.toggle('active', appSettings.coverRotEnabled);
+      coverRotToggle.textContent = appSettings.coverRotEnabled ? '开启' : '关闭';
+    }
+    // 立即生效：当前歌若无封面显示则回退音符
+    const t = state.playlist[state.currentIndex];
+    if (t) setCoverArt(appSettings.coverRotEnabled ? (t._coverUrl || null) : null, t.color);
+    saveSettings();
+  };
+  coverRotToggle?.addEventListener('click', () => { appSettings.coverRotEnabled = !appSettings.coverRotEnabled; refreshCoverRot(); });
+
+  // 歌词：开关 / 字号 / 颜色 / 炫彩
+  const lyricToggle = document.getElementById('set-lyric-toggle');
+  const lyricSizeInput = document.getElementById('set-lyric-size');
+  const lyricColorInput = document.getElementById('set-lyric-color');
+  const lyricRainbowToggle = document.getElementById('set-lyric-rainbow-toggle');
+  const refreshLyric = () => {
+    if (lyricToggle) {
+      lyricToggle.classList.toggle('active', appSettings.lyricEnabled);
+      lyricToggle.textContent = appSettings.lyricEnabled ? '开启' : '关闭';
+    }
+    if (lyricSizeInput) lyricSizeInput.value = appSettings.lyricFontSize;
+    if (lyricColorInput) lyricColorInput.value = appSettings.lyricColor;
+    if (lyricRainbowToggle) {
+      lyricRainbowToggle.classList.toggle('active', appSettings.lyricRainbow);
+      lyricRainbowToggle.textContent = appSettings.lyricRainbow ? '开启' : '关闭';
+    }
+    applySettings();
+    // 立即刷新当前歌词显示（可能因开关隐藏/显示）
+    const t = state.playlist[state.currentIndex];
+    if (t) {
+      if (appSettings.lyricEnabled && t._isSafFile && !t._lrc && t._lyricDocId) {
+        loadLyrics(t);  // 首次打开开关时补读当前歌歌词
+      } else if (t._lrc) {
+        renderLyricWindow(t, audio.currentTime || 0);
+      } else {
+        resetLyricDisplay();
+      }
+    }
+    saveSettings();
+  };
+  lyricToggle?.addEventListener('click', () => { appSettings.lyricEnabled = !appSettings.lyricEnabled; refreshLyric(); });
+  lyricSizeInput?.addEventListener('change', (e) => {
+    const v = Math.max(10, Math.min(28, parseInt(e.target.value, 10) || 15));
+    appSettings.lyricFontSize = v; e.target.value = v; applySettings(); saveSettings();
+  });
+  lyricColorInput?.addEventListener('input', (e) => { appSettings.lyricColor = e.target.value; applySettings(); saveSettings(); });
+  lyricRainbowToggle?.addEventListener('click', () => { appSettings.lyricRainbow = !appSettings.lyricRainbow; refreshLyric(); });
+
   // 恢复默认
   document.getElementById('set-reset')?.addEventListener('click', () => {
     appSettings = { ...SETTINGS_DEFAULT };
     refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode(); refreshAppTitle(); refreshMark();
+    refreshCoverRot(); refreshLyric();
     if (typeof showToast === 'function') showToast('已恢复默认外观');
   });
 
-  refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode();
+  refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode(); refreshCoverRot(); refreshLyric();
 }
 
 function initSettings() {

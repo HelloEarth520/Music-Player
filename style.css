@@ -326,6 +326,18 @@ html, body {
   display: flex; align-items: center; justify-content: center;
 }
 
+/* 歌曲封面图（封面旋转开关开启且有封面时显示，随 .cover 一起旋转） */
+.cover-img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  z-index: 0;
+}
+
+/* 高光保持在封面图之上，保留液态玻璃质感 */
+.cover::before { z-index: 2; }
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
@@ -455,6 +467,61 @@ html, body {
   color: var(--text-muted);
   min-width: 34px;
   text-align: left;
+}
+
+/* ============================
+   Lyrics（最近 5 行：当前句 + 前后各 2 行）
+   ============================ */
+.lyric-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  max-width: 520px;
+  height: 108px;               /* 固定 5 行高度，避免布局跳动 */
+  overflow: hidden;
+  user-select: none;
+  pointer-events: none;
+}
+.lyric-section.hidden { display: none; }
+
+.lyric-row {
+  font-size: var(--lyric-size, 15px);
+  color: var(--lyric-color, #ffffff);
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0.30;
+  max-width: 100%;
+  padding: 1px 12px;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;       /* 超长歌词最多两行，防撑破布局 */
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.lyric-row.lyric-active {
+  opacity: 1;
+  transform: scale(1.05);
+  text-shadow: 0 0 16px rgba(255,255,255,0.35);
+}
+
+/* 炫彩流逝：当前行文字渐变色流动 */
+.lyric-section.rainbow .lyric-row.lyric-active {
+  background: linear-gradient(90deg, #ff5f6d, #ffc371, #40e0d0, #7f7fd5, #ff5f6d);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  animation: lyric-flow 3.5s linear infinite;
+}
+@keyframes lyric-flow {
+  to { background-position: -200% center; }
 }
 
 /* ============================

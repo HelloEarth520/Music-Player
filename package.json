@@ -1,6 +1,6 @@
 {
   "name": "music-player",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "本地音乐播放器，支持多格式播放与 FFmpeg 转码",
   "main": "main.js",
   "author": {
