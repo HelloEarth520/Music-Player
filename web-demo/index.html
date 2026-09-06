@@ -7,9 +7,20 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <!-- 背景内容层：动态模式下透明（透出第三方动态壁纸），
-       系统/图片/视频模式下承载对应背景 -->
+  <!-- 背景内容层：body 的直接子节点，z-index:0。
+       顶栏/侧栏/文件夹栏的 backdrop-filter 在此基础上对 #bg 采样（浏览器实测：#bg
+       z-index:-1 / .app overflow:hidden auto 都不影响栏的 backdrop 采样，结构本身
+       无 bug）。在 live 模式下 #bg 只剩一层极淡渐变（因为动态壁纸是透明窗口之外的
+       系统层，无法被 CSS backdrop-filter 模糊），栏为保证肉眼仍像玻璃，
+       在 CSS 里加了「自包含高光渐变 + inset top highlight」。 -->
   <div id="bg" class="bg-layer"></div>
+
+  <!-- 壁纸模糊遮罩：位于 #bg 之上、.app 之下的全屏 backdrop-filter 层，
+       把壁纸整屏做毛玻璃模糊（与封面卡片同机理）。层比屏幕大（超出可视区），
+       避免边缘采样露边。强度跟随「模糊(Blur)」设置 --glass-blur；
+       live 模式（透明窗口透出系统动态壁纸）由 JS 加 .off 停用——
+       系统层壁纸无法被 CSS backdrop-filter 采样，保持清晰直出。 -->
+  <div id="bg-veil" class="bg-veil"></div>
 
   <div class="app">
     <!-- 顶部标题栏 -->
@@ -58,6 +69,7 @@
         <!-- 封面区域：半透明液态玻璃圆，映射背景 -->
         <div class="cover-wrapper">
           <div id="cover" class="cover spinning-paused">
+            <img id="cover-img" class="cover-img" alt="" style="display:none" />
             <span id="cover-icon" class="cover-icon">
               <svg viewBox="0 0 24 24" width="52" height="52" fill="currentColor" aria-hidden="true">
                 <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/>
@@ -90,6 +102,15 @@
           <span id="vol-icon" class="vol-icon">🔊</span>
           <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" class="volume-slider" />
           <span id="vol-value">80%</span>
+        </div>
+
+        <!-- 歌词：当前句 + 前后各 2 行（最近 5 行），随播放滚动 -->
+        <div id="lyric-section" class="lyric-section hidden">
+          <div class="lyric-row" data-off="-2"></div>
+          <div class="lyric-row" data-off="-1"></div>
+          <div class="lyric-row lyric-active" data-off="0"></div>
+          <div class="lyric-row" data-off="1"></div>
+          <div class="lyric-row" data-off="2"></div>
         </div>
 
         <!-- 控制按钮（纯 SVG 图标，无表情） -->
@@ -491,6 +512,45 @@
           <div class="settings-hint">调节玻璃磨砂浓度，数值越高越不透明</div>
         </div>
 
+        <!-- 转码开关 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">转码 (Transcode)</span>
+            <button id="set-transcode-toggle" class="set-toggle">关闭</button>
+          </div>
+          <div class="settings-hint">关闭后启动时不加载原生 FFmpeg 引擎（节省内存）；开启后顶栏出现「转码」按钮，首次使用才加载</div>
+        </div>
+
+        <!-- 封面旋转：播放时封面圆内显示歌曲同目录封面图并旋转 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">封面旋转 (Cover Spin)</span>
+            <button id="set-cover-rot-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-hint">开启后封面圆内显示歌曲同目录封面图并随播放旋转（无封面图时保持音符标志）；关闭则始终显示音符标志</div>
+        </div>
+
+        <!-- 歌词显示：开关 / 字号 / 颜色 / 炫彩流逝 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">歌词 (Lyrics)</span>
+            <button id="set-lyric-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">字号</span>
+            <input type="number" id="set-lyric-size" class="set-text-input" min="10" max="28" value="15" style="max-width:80px" />
+          </div>
+          <div class="settings-row">
+            <span class="set-label">颜色</span>
+            <input type="color" id="set-lyric-color" class="set-color" value="#ffffff" />
+          </div>
+          <div class="settings-row">
+            <span class="set-label">炫彩流逝</span>
+            <button id="set-lyric-rainbow-toggle" class="set-toggle">关闭</button>
+          </div>
+          <div class="settings-hint">在音量条下方显示最近 5 行歌词（当前句高亮居中）。歌词来自歌曲同目录 .lrc 文件；「炫彩流逝」让当前句呈流动渐变色</div>
+        </div>
+
         <!-- 应用标题：自定义顶栏文字与音符标志 -->
         <div class="settings-group glass">
           <div class="settings-group-head">
@@ -527,7 +587,7 @@
             </label>
             <label class="color-item">
               <span>转码面板</span>
-              <input type="color" id="set-color-transcode" class="set-color" value="#f1f0ff" />
+              <input type="color" id="set-color-transcode" class="set-color" value="#111111" />
             </label>
             <label class="color-item">
               <span>均衡器面板</span>
@@ -557,7 +617,7 @@
             </label>
             <label class="bg-src-item">
               <input type="radio" name="bgsrc" value="solid" />
-              <span>纯色图片</span>
+              <span>自定义纯色</span>
             </label>
           </div>
           <div id="bg-src-hint" class="settings-hint"></div>
@@ -565,7 +625,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.14.0</span>
+        <span class="settings-version">v2.16.0</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>
@@ -592,10 +652,16 @@
   <!-- 原生 Audio 元素 -->
   <audio id="audio-engine" preload="auto"></audio>
 
-  <!-- 体验版：仅界面展示，所有按钮不调用真实功能 -->
+  <!--
+    FFmpeg 库改为「懒加载」：不在页面加载时 import。
+    只有用户在转码面板点击「加载 FFmpeg」或「开始转码」时才动态 import，
+    避免启动即把 ffmpeg 模块（及后续约 31MB wasm）读入内存。
+    Android 走原生桥接 / Web Audio，本库完全不会被加载。
+  -->
+
   <script src="demo.js"></script>
 
-  <!-- 底部霓虹免责声明（始终位于网页最下方） -->
+  <!-- 底部霓虹免责声明（始终位于网页最下方，体验版专属） -->
   <footer class="disclaimer" id="disclaimer">网页仅供参考，网页不代表应用实际功能！！！</footer>
 </body>
 </html>

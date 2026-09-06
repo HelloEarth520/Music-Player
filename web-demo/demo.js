@@ -53,6 +53,16 @@
 
   /* ---------- 演示数据：多文件夹，每文件夹 7 首，按全局序号命名 ---------- */
   const FORMATS = ["FLAC · 24bit", "MP3 · 320k", "WAV", "OGG", "AAC", "M4A", "OPUS", "APE"];
+  // v2.16：演示歌名/歌手池，让「歌手行」等新 UI 有真实观感
+  const TITLES = [
+    "星夜漫游", "风与海", "落日飞行", "微光", "城市晚安", "春夜雨", "环岛公路",
+    "慢速心跳", "纸飞机", "雾中车站", "夏日终曲", "月亮邮局", "逆光", "回声山谷",
+    "无人岛屿", "凌晨两点", "街灯", "潮汐", "深夜食堂", "屋顶看星", "漫游指南",
+  ];
+  const ARTISTS = [
+    "夜航星", "浅夏", "蓝桥", "拾光机", "白噪音", "未名", "山茶",
+    "云雀", "薄荷汽水", "阿岚", "远山", "林间信使", "沉舟", "橘海",
+  ];
   function buildTracks(start) {
     const arr = [];
     for (let i = 0; i < 7; i++) {
@@ -60,8 +70,8 @@
       const total = 120 + n * 13;
       const m = Math.floor(total / 60), s = total % 60;
       arr.push({
-        title: String(n),
-        artist: "演示",
+        title: TITLES[(n - 1) % TITLES.length],
+        artist: ARTISTS[(n - 1) % ARTISTS.length],
         format: FORMATS[(n - 1) % FORMATS.length],
         dur: total,
         durStr: `${m}:${String(s).padStart(2, "0")}`,
@@ -76,6 +86,8 @@
   ];
 
   let currentFolderIdx = 0, currentTrackIdx = 0, isPlaying = false, curTime = 0, playTimer = null;
+  // v2.16 状态：封面旋转 / 歌词显示（含滚动行）
+  let coverRotOn = true, lyricEnabled = true, lyricIdx = 0;
 
   /* ---------- 音乐目录（切换文件夹同步刷新歌曲） ---------- */
   const dl = $("#dir-list");
@@ -117,6 +129,72 @@
     $$(".playlist-item").forEach((x, i) => x.classList.toggle("active", i === currentTrackIdx));
   }
 
+  /* ---------- v2.16 歌词区：演示歌词随播放滚动（最近 5 行） ---------- */
+  const lyricRows = $$("#lyric-section .lyric-row");
+  const FAKE_LYRICS = [
+    "晚风穿过整座城市的灯光",
+    "把心事折成纸飞机 扔向远方",
+    "你听过海浪 也看过极光",
+    "而我只想记住你唱歌的模样",
+    "时针在屋顶上慢悠悠地走",
+    "影子被路灯拉得很长很长",
+    "别问明天会在哪一站靠岸",
+    "此刻旋律就是最好的行囊",
+    "星光落进酒杯 泛起微光",
+    "把副歌唱完 我们就回家",
+    "世界很大 大到忘了方向",
+    "还好有这一首歌 陪在身旁",
+  ];
+  function renderLyrics() {
+    const sec = $("#lyric-section");
+    if (!sec) return;
+    if (!lyricEnabled) { sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+    lyricRows.forEach((row, ri) => {
+      const line = FAKE_LYRICS[lyricIdx + ri - 2] || "";
+      if (row.textContent !== line) row.textContent = line;
+      row.classList.toggle("lyric-active", ri === 2);
+    });
+  }
+  // 进度/切歌后同步歌词行（每行约 2 秒）
+  function syncLyrics() {
+    if (!lyricEnabled) return;
+    const li = Math.max(0, Math.min(FAKE_LYRICS.length - 1, Math.floor(curTime / 2)));
+    if (li !== lyricIdx) { lyricIdx = li; renderLyrics(); }
+  }
+
+  /* ---------- v2.16 封面旋转：无真实封面，生成渐变假封面展示旋转效果 ---------- */
+  const coverArtCache = {};
+  function fakeCoverURL(n) {
+    if (coverArtCache[n]) return coverArtCache[n];
+    const c = document.createElement("canvas");
+    c.width = 320; c.height = 320;
+    const g = c.getContext("2d");
+    const hue = (n * 47) % 360;
+    const grd = g.createLinearGradient(0, 0, 320, 320);
+    grd.addColorStop(0, `hsl(${hue},72%,58%)`);
+    grd.addColorStop(1, `hsl(${(hue + 80) % 360},78%,36%)`);
+    g.fillStyle = grd; g.fillRect(0, 0, 320, 320);
+    g.beginPath(); g.arc(160, 160, 116, 0, Math.PI * 2);
+    g.strokeStyle = "rgba(255,255,255,0.55)"; g.lineWidth = 12; g.stroke();
+    g.beginPath(); g.arc(160, 160, 58, 0, Math.PI * 2);
+    g.fillStyle = "rgba(255,255,255,0.35)"; g.fill();
+    coverArtCache[n] = c.toDataURL("image/png");
+    return coverArtCache[n];
+  }
+  function updateCoverArt() {
+    const img = $("#cover-img"), icon = $("#cover-icon");
+    if (!img || !icon) return;
+    if (coverRotOn) {
+      img.src = fakeCoverURL(currentTrackIdx + 1);
+      img.style.display = "";
+      icon.style.display = "none";
+    } else {
+      img.style.display = "none";
+      icon.style.display = "";
+    }
+  }
+
   /* ---------- 进度（模拟播放推进 / 拖动定位） ---------- */
   function updateProgress() {
     const tr = FOLDERS[currentFolderIdx].tracks[currentTrackIdx];
@@ -137,6 +215,9 @@
     curTime = 0;
     updateProgress();
     updateActiveItem();
+    lyricIdx = 0;
+    renderLyrics();
+    updateCoverArt();
   }
 
   function setPlaying(p) {
@@ -159,6 +240,7 @@
     curTime += 1;
     if (curTime >= tr.dur) { curTime = tr.dur; updateProgress(); nextTrack(); return; }
     updateProgress();
+    syncLyrics();
   }
 
   function nextTrack() {
@@ -202,6 +284,7 @@
     const tr = FOLDERS[currentFolderIdx].tracks[currentTrackIdx];
     curTime = ratio * tr.dur;
     updateProgress();
+    syncLyrics();
   }
   wrap.addEventListener("pointerdown", (e) => {
     dragging = true;
@@ -260,11 +343,19 @@
     "#ffcc80", // 橙
     "#bcaaa4", // 棕灰
   ];
-  function randomSoftColor() {
-    return SOFT_COLORS[Math.floor(Math.random() * SOFT_COLORS.length)];
-  }
+  const veilEl = () => $("#bg-veil");
+  function randOf(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  // 演示「壁纸」：两团鲜明径向色块 + 深色底（无真实图片），使「模糊(Blur)」的
+  // 整屏磨砂遮罩 #bg-veil 效果肉眼可见
   function applyBg() {
-    bg.style.background = randomSoftColor();
+    const a = randOf(STANDARD_COLORS);
+    const b = randOf(STANDARD_COLORS);
+    const c = randOf(SOFT_COLORS);
+    bg.style.background =
+      `radial-gradient(circle at 22% 16%, ${a} 0, ${a} 16%, transparent 52%),` +
+      `radial-gradient(circle at 84% 76%, ${b} 0, ${b} 22%, transparent 56%),` +
+      `linear-gradient(150deg, ${c} 0%, #14112e 88%)`;
+    if (veilEl()) veilEl().classList.toggle("off", !blurOn);
   }
 
   /* ---------- 纯色背景：应用内透明选色菜单 ---------- */
@@ -313,7 +404,10 @@
   /* ---------- 设置：模糊 / 毛玻璃 / 文字颜色（视觉真实生效） ---------- */
   let blurOn = true, frostOn = true, blurVal = 10, frostVal = 8;
   function applyBlur() {
-    document.documentElement.style.setProperty("--glass-blur", (blurOn ? blurVal : 0) + "px");
+    const px = (blurOn ? blurVal : 0);
+    document.documentElement.style.setProperty("--glass-blur", px + "px");
+    // v2.16 壁纸模糊遮罩：关闭模糊 → 遮罩 off（壁纸清晰直出）
+    if (veilEl()) veilEl().classList.toggle("off", !blurOn);
   }
   function applyFrost() {
     document.documentElement.style.setProperty("--glass-frost", frostOn ? frostVal / 100 : 0);
@@ -406,6 +500,45 @@
     toast("外观已恢复默认");
   });
 
+  /* ---------- v2.16 设置项：转码开关 / 封面旋转 / 歌词（仅视觉切换） ---------- */
+  const transcodeToggle = $("#set-transcode-toggle");
+  if (transcodeToggle) transcodeToggle.addEventListener("click", function () {
+    const on = this.classList.toggle("active");
+    this.textContent = on ? "开启" : "关闭";
+    const btn = $("#btn-transcode");
+    if (btn) { btn.disabled = !on; btn.classList.toggle("tc-disabled", !on); }
+    toast(on ? "转码入口已开启（演示）" : "转码入口已关闭");
+  });
+  const coverRotToggle = $("#set-cover-rot-toggle");
+  if (coverRotToggle) coverRotToggle.addEventListener("click", function () {
+    coverRotOn = this.classList.toggle("active");
+    this.textContent = coverRotOn ? "开启" : "关闭";
+    updateCoverArt();
+  });
+  const lyricToggle = $("#set-lyric-toggle");
+  if (lyricToggle) lyricToggle.addEventListener("click", function () {
+    lyricEnabled = this.classList.toggle("active");
+    this.textContent = lyricEnabled ? "开启" : "关闭";
+    renderLyrics();
+  });
+  const lyricSizeInput = $("#set-lyric-size");
+  if (lyricSizeInput) lyricSizeInput.addEventListener("change", (e) => {
+    const v = Math.max(10, Math.min(28, parseInt(e.target.value, 10) || 15));
+    e.target.value = v;
+    document.documentElement.style.setProperty("--lyric-size", v + "px");
+  });
+  const lyricColorInput = $("#set-lyric-color");
+  if (lyricColorInput) lyricColorInput.addEventListener("input", (e) =>
+    document.documentElement.style.setProperty("--lyric-color", e.target.value)
+  );
+  const lyricRainbowToggle = $("#set-lyric-rainbow-toggle");
+  if (lyricRainbowToggle) lyricRainbowToggle.addEventListener("click", function () {
+    const on = this.classList.toggle("active");
+    this.textContent = on ? "开启" : "关闭";
+    const sec = $("#lyric-section");
+    if (sec) sec.classList.toggle("rainbow", on && lyricEnabled);
+  });
+
   /* ---------- 均衡器：滑块实时驱动可视化 ---------- */
   let eqOn = true;
   const eqToggle = $("#btn-eq-toggle");
@@ -486,6 +619,16 @@
   setPlaying(false);
   applyBlur();
   applyFrost();
+  // 演示版默认开启转码入口（www 版默认关闭，此处覆盖以便展示）
+  const tcBtn = $("#btn-transcode");
+  if (tcBtn) { tcBtn.disabled = false; tcBtn.classList.remove("tc-disabled"); }
+  const tcTg = $("#set-transcode-toggle");
+  if (tcTg) { tcTg.classList.add("active"); tcTg.textContent = "开启"; }
+  // 歌词初始样式变量（与 www 播放器默认一致）
+  document.documentElement.style.setProperty("--lyric-size", "15px");
+  document.documentElement.style.setProperty("--lyric-color", "#ffffff");
+  renderLyrics();
+  updateCoverArt();
   const initBg = (document.querySelector('input[name="bgsrc"]:checked') || {}).value || "live";
   applyBg();
   // 演示版：首开即弹用户协议 →（同意后）数据保存位置
