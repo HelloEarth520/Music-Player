@@ -907,7 +907,8 @@ async function loadSafCover(track) {
 // =============================================================
 
 /** 解析 LRC 文本 → [{ time: 秒, text }] 按时间升序
- *  兼容：标准 [mm:ss.xx]、网易云逐字歌词([ms,ms](ms,ms,n)逐词…)、JSON 元数据头
+ *  兼容：标准 [mm:ss.xx]、网易云逐字歌词([ms,ms](ms,ms,n)逐词…)、
+ *        网易云逐字 JSON 词条({"t":ms,"c":[{"tx":词}...]})；元数据 JSON 自动跳过
  */
 function parseLRC(text) {
   const out = [];
@@ -915,11 +916,27 @@ function parseLRC(text) {
   const lineRe = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
   const verbatimHead = /^\[(\d+)[,，](\d+)\]/;
   const wordTagRe = /\(\d+[,，]\d+[,，]\d+\)/g;
+  // 网易云元数据/信息头（作词/作曲/编曲等），不作为歌词
+  const metaHeadRe = /^(作词|作曲|编曲|制作|监制|OP|SP|企划|出品)[:：]/;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
-    // 网易云逐字歌词的 JSON 元数据行（作曲/作词等），无时间轴，跳过
-    if (line.startsWith('{') && line.includes('"t"')) continue;
+    // JSON 行：可能是元数据(作曲/作词) 或 逐字词条 {"t":ms,"c":[{"tx":词}]}
+    if (line.startsWith('{')) {
+      try {
+        const j = JSON.parse(line);
+        if (j && Array.isArray(j.c)) {
+          const tx = j.c.map(x => (x && typeof x.tx === 'string') ? x.tx : '').join('').trim();
+          if (tx && !metaHeadRe.test(tx)) {
+            if (typeof j.t === 'number' && j.t >= 0) {
+              out.push({ time: j.t / 1000, text: tx });   // 逐字 JSON 词条
+            }
+            // 无 t 或 t<0（纯元数据）：跳过
+          }
+        }
+      } catch (e) { /* 非 JSON 的 { 行忽略 */ }
+      continue;
+    }
     // 网易云逐字歌词行：[毫秒,毫秒](…)词 (…)词 → 整句作为一条，时间=行首毫秒
     const vh = line.match(verbatimHead);
     if (vh) {
@@ -949,11 +966,14 @@ function parseLRC(text) {
   return out;
 }
 
-/** 隐藏歌词区并清空 5 行（切歌/无歌词时调用） */
+/** 隐藏歌词区并清空 5 行（切歌/无歌词时调用）。同时失效当前歌的防抖窗口，
+ *  避免"切走再切回同一首歌、且歌词窗口相同"时被防抖误判跳过导致歌词空白 */
 function resetLyricDisplay() {
   if (!lyricRows.length) return;
   for (const row of lyricRows) row.textContent = '';
   if (lyricSection) lyricSection.classList.add('hidden');
+  const t = state.playlist[state.currentIndex];
+  if (t) t._lrcWinStart = undefined;
 }
 
 /**
@@ -973,8 +993,9 @@ function renderLyricWindow(track, time) {
     if (lrc[i].time <= time) cur = i; else break;
   }
   const start = cur - 2;
-  // 防抖：当前窗口未变则不重绘（timeupdate 约 4Hz）
-  if (track._lrcWinStart === start) return;
+  // 防抖：当前窗口未变且歌词区可见则不重绘（timeupdate 约 4Hz）；
+  // 若歌词区刚被 reset 隐藏（hidden），必须强制重绘一次恢复显示
+  if (track._lrcWinStart === start && lyricSection && !lyricSection.classList.contains('hidden')) return;
   track._lrcWinStart = start;
   lyricRows.forEach((row, off) => {
     const idx = start + off;
@@ -988,11 +1009,20 @@ function renderLyricWindow(track, time) {
   if (lyricSection) lyricSection.classList.remove('hidden');
 }
 
-/** 加载当前 SAF 歌曲的同目录 .lrc 歌词（异步，带切歌竞态保护） */
+/** 加载当前 SAF 歌曲的同目录 .lrc 歌词（异步，带切歌竞态保护）
+ *  已缓存（切回同一首歌）时不再重复读文件，立即渲染恢复歌词 */
 async function loadLyrics(track) {
   if (!appSettings.lyricEnabled || !track._lyricDocId || !window.AndroidDirectoryPicker) {
     track._lrc = [];
     resetLyricDisplay();
+    return;
+  }
+  // 缓存命中：返回上一首时秒显歌词
+  if (Array.isArray(track._lrc)) {
+    if (state.playlist[state.currentIndex] === track) {
+      track._lrcWinStart = undefined;
+      renderLyricWindow(track, audio.currentTime || 0);
+    }
     return;
   }
   try {
@@ -1001,6 +1031,7 @@ async function loadLyrics(track) {
   } catch (e) {
     track._lrc = [];
   }
+  track._lrcWinStart = undefined; // 强制渲染首帧（防抖窗口失效）
   // 竞态保护：若期间已切歌则丢弃
   if (state.playlist[state.currentIndex] !== track) return;
   renderLyricWindow(track, audio.currentTime || 0);
