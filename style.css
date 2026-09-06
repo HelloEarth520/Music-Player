@@ -183,10 +183,13 @@ html, body {
   padding: 10px 18px;
   cursor: pointer;
   border-radius: var(--radius-sm);
-  margin: 2px 8px;
+  margin: 3px 8px;
   transition: var(--transition);
   position: relative;
   overflow: hidden auto;
+  /* 每一项常驻细边框 + 微弱底色，形成"每首歌一个小卡片" */
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.03);
 }
 
 .playlist-item::before {
@@ -197,14 +200,17 @@ html, body {
   transition: var(--transition);
 }
 
-.playlist-item:hover::before { opacity: 0.1; }
-.playlist-item.active::before { opacity: 0.18; }
+.playlist-item:hover::before { opacity: 0.10; }
+.playlist-item:hover { border-color: rgba(255,255,255,0.28); color: var(--text); }
 
-.playlist-item:hover { color: var(--text); }
-
+/* 播放中的歌曲：边框 + 底色 + 辉光都切换为主题色 */
 .playlist-item.active {
   color: var(--accent);
+  border-color: var(--accent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent) 0%, color-mix(in srgb, var(--accent) 4%, transparent) 60%, transparent 100%);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 12px color-mix(in srgb, var(--accent) 12%, transparent);
 }
+.playlist-item.active::before { opacity: 0.16; }
 
 .playlist-item-num {
   font-size: 0.75rem;

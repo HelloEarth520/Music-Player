@@ -15,6 +15,13 @@
        在 CSS 里加了「自包含高光渐变 + inset top highlight」。 -->
   <div id="bg" class="bg-layer"></div>
 
+  <!-- 壁纸模糊遮罩：位于 #bg 之上、.app 之下的全屏 backdrop-filter 层，
+       把壁纸整屏做毛玻璃模糊（与封面卡片同机理）。层比屏幕大（超出可视区），
+       避免边缘采样露边。强度跟随「模糊(Blur)」设置 --glass-blur；
+       live 模式（透明窗口透出系统动态壁纸）由 JS 加 .off 停用——
+       系统层壁纸无法被 CSS backdrop-filter 采样，保持清晰直出。 -->
+  <div id="bg-veil" class="bg-veil"></div>
+
   <div class="app">
     <!-- 顶部标题栏 -->
     <header class="titlebar">
@@ -618,7 +625,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.15.0</span>
+        <span class="settings-version">v2.16.0</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

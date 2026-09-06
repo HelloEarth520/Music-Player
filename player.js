@@ -233,6 +233,18 @@ function getBaseName(filename) {
   return filename.replace(/\.[^.]+$/, '');
 }
 
+/**
+ * 从网易云导出文件名解析歌手："netease - 歌手 - 歌名" → "歌手"；
+ * 本地 "歌手 - 歌名" → "歌手"；无法识别返回 ''
+ */
+function parseArtistFromName(trackName) {
+  if (!trackName) return '';
+  const parts = trackName.split(' - ');
+  if (parts.length >= 3 && /^netease/i.test(parts[0].trim())) return parts[1].trim();
+  if (parts.length >= 2) return parts[0].trim();
+  return '';
+}
+
 function randomColor() {
   const colors = [
     'linear-gradient(135deg,#6d28d9,#2563eb)',
@@ -573,7 +585,7 @@ function playAt(index) {
   if (track._isSafFile && window.AndroidDirectoryPicker && window.AndroidDirectoryPicker.plugin) {
     // 立即更新 UI（不等异步读取完成，避免一直显示"未选择音乐"）
     trackTitle.textContent = track.name;
-    trackArtist.textContent = '--';
+    trackArtist.textContent = track.artist || parseArtistFromName(track.name) || '--';
     trackFormat.textContent = track.ext.toUpperCase();
     if (track.duration) {
       totalTime.textContent = formatTime(track.duration);
@@ -629,7 +641,7 @@ function playAt(index) {
   });
   
   trackTitle.textContent = track.name;
-  trackArtist.textContent = '--';
+  trackArtist.textContent = track.artist || parseArtistFromName(track.name) || '--';
   trackFormat.textContent = track.ext.toUpperCase();
   
   // 如果已有元数据，立即显示
@@ -1635,6 +1647,7 @@ function applySettings() {
   root.setProperty('--lyric-color', appSettings.lyricColor || '#ffffff');
   if (lyricSection) lyricSection.classList.toggle('rainbow', !!(appSettings.lyricEnabled && appSettings.lyricRainbow));
   applyAppTitle();
+  updateBgVeil();
 }
 
 // 应用标题：把顶栏 logo 文字与音符标志写到 DOM（自定义文字，持久化到设置）
@@ -1889,6 +1902,7 @@ async function applyBackground() {
   const el = bgEl();
   if (!el) return;
   clearBgVisual();
+  updateBgVeil();
 
   if (bgState.source === 'live') {
     // 透明窗口 + FLAG_SHOW_WALLPAPER 已透出第三方动态壁纸。
@@ -1913,6 +1927,15 @@ async function applyBackground() {
   // 其它情况回退到渐变背景（保证毛玻璃始终有可模糊的内容）
   el.style.backgroundImage = 'linear-gradient(135deg, #6d28d9 0%, #2563eb 45%, #db2777 100%)';
   el.style.backgroundColor = 'transparent';
+}
+
+// 壁纸模糊遮罩：仅当壁纸内容在 WebView 内（system/image/solid）且「模糊」开启时启用。
+// live 模式的动态壁纸是透明窗口外的系统层，CSS backdrop-filter 无法采样 → 停用，保持壁纸清晰直出。
+function updateBgVeil() {
+  const veil = document.getElementById('bg-veil');
+  if (!veil) return;
+  const off = !appSettings.blurOn || bgState.source === 'live';
+  veil.classList.toggle('off', off);
 }
 
 async function applySystemWallpaper(el) {
