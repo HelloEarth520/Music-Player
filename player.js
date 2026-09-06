@@ -906,17 +906,37 @@ async function loadSafCover(track) {
 // 歌词（.lrc）：最近 5 行（当前句 + 前后各 2 行），随播放滚动
 // =============================================================
 
-/** 解析 LRC 文本 → [{ time: 秒, text }] 按时间升序 */
+/** 解析 LRC 文本 → [{ time: 秒, text }] 按时间升序
+ *  兼容：标准 [mm:ss.xx]、网易云逐字歌词([ms,ms](ms,ms,n)逐词…)、JSON 元数据头
+ */
 function parseLRC(text) {
   const out = [];
   if (!text) return out;
   const lineRe = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  const verbatimHead = /^\[(\d+)[,，](\d+)\]/;
+  const wordTagRe = /\(\d+[,，]\d+[,，]\d+\)/g;
   for (const raw of text.split(/\r?\n/)) {
-    const content = raw.replace(lineRe, '').trim();
+    const line = raw.trim();
+    if (!line) continue;
+    // 网易云逐字歌词的 JSON 元数据行（作曲/作词等），无时间轴，跳过
+    if (line.startsWith('{') && line.includes('"t"')) continue;
+    // 网易云逐字歌词行：[毫秒,毫秒](…)词 (…)词 → 整句作为一条，时间=行首毫秒
+    const vh = line.match(verbatimHead);
+    if (vh) {
+      const sentence = line
+        .replace(verbatimHead, '')
+        .replace(wordTagRe, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (sentence) out.push({ time: parseInt(vh[1], 10) / 1000, text: sentence });
+      continue;
+    }
+    // 标准 LRC 行（可能混有逐字词标签 [mm:ss.xx](ms,ms,n)词 → 去标签取纯文本）
+    const content = line.replace(lineRe, '').replace(wordTagRe, '').trim();
     if (!content) continue;
     let m;
     lineRe.lastIndex = 0;
-    while ((m = lineRe.exec(raw)) !== null) {
+    while ((m = lineRe.exec(line)) !== null) {
       const min = parseInt(m[1], 10);
       const sec = parseInt(m[2], 10);
       const fracStr = m[3] || '';
