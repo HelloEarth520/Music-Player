@@ -104,13 +104,20 @@
           <span id="vol-value">80%</span>
         </div>
 
-        <!-- 歌词：当前句 + 前后各 2 行（最近 5 行），随播放滚动 -->
+        <!-- 歌词：全量滚动列表（当前句始终居中放大，上下逐行缩小变淡，可滑动浏览） -->
         <div id="lyric-section" class="lyric-section hidden">
-          <div class="lyric-row" data-off="-2"></div>
-          <div class="lyric-row" data-off="-1"></div>
-          <div class="lyric-row lyric-active" data-off="0"></div>
-          <div class="lyric-row" data-off="1"></div>
-          <div class="lyric-row" data-off="2"></div>
+          <div id="lyric-viewport" class="lyric-viewport">
+            <div id="lyric-list" class="lyric-list"></div>
+          </div>
+          <!-- 中间行右侧：破折号 + 播放按钮 → 点击弹出扁椭圆气泡「从此句播放」 -->
+          <button id="lyric-jump" class="lyric-jump" title="从此句开始播放" aria-label="从此句开始播放">
+            <span class="lyric-jump-dash">—</span>
+            <svg class="lyric-jump-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><polygon points="6,3 20,12 6,21"/></svg>
+          </button>
+          <div id="lyric-jump-pop" class="lyric-jump-pop hidden">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="6,3 20,12 6,21"/></svg>
+            <span>从此句播放</span>
+          </div>
         </div>
 
         <!-- 控制按钮（纯 SVG 图标，无表情） -->
@@ -625,7 +632,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.16.0</span>
+        <span class="settings-version">v2.17.0</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>
