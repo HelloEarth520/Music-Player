@@ -143,7 +143,8 @@ const eqState = {
 
 // 虚拟化渲染配置
 const VIRTUAL_CONFIG = {
-  itemHeight: 56,     // 每行高度（px）
+  itemHeight: 68,     // 每行高度（px）= 卡片 58 + 上下间距 5×2
+  itemGap: 5,         // 卡片上下留白（液态玻璃投影空间）
   bufferSize: 5,      // 上下缓冲行数
   containerHeight: 0, // 容器高度（动态计算）
 };
@@ -175,7 +176,10 @@ const modeBtnShuffle   = $('btn-mode-shuffle');
 const coverImg      = $('cover-img');
 const coverIcon     = $('cover-icon');
 const lyricSection  = $('lyric-section');
-const lyricRows     = lyricSection ? lyricSection.querySelectorAll('.lyric-row') : [];
+const lyricViewport = $('lyric-viewport');
+const lyricList     = $('lyric-list');
+const lyricJumpBtn  = $('lyric-jump');
+const lyricJumpPop  = $('lyric-jump-pop');
 const playlistEl    = $('playlist');
 const trackCount    = $('track-count');
 const fileInput     = $('file-input');
@@ -306,10 +310,10 @@ function renderVisibleItems() {
     const track = state.playlist[i];
     const item = createPlaylistItem(track, i);
     item.style.position = 'absolute';
-    item.style.top = `${i * VIRTUAL_CONFIG.itemHeight}px`;
+    item.style.top = `${i * VIRTUAL_CONFIG.itemHeight + VIRTUAL_CONFIG.itemGap}px`;
     item.style.left = '0';
     item.style.right = '0';
-    item.style.height = `${VIRTUAL_CONFIG.itemHeight}px`;
+    item.style.height = `${VIRTUAL_CONFIG.itemHeight - VIRTUAL_CONFIG.itemGap * 2}px`;
     container.appendChild(item);
   }
 
@@ -915,7 +919,9 @@ async function loadSafCover(track) {
 }
 
 // =============================================================
-// 歌词（.lrc）：最近 5 行（当前句 + 前后各 2 行），随播放滚动
+// 歌词（.lrc）：全量滚动列表 —— 当前句始终居中放大、
+// 上下逐行缩小变淡（收敛视差），可上下滑动浏览，
+// 浏览停止 5 秒后自动平滑滚回当前播放句。
 // =============================================================
 
 /** 解析 LRC 文本 → [{ time: 秒, text }] 按时间升序
@@ -978,47 +984,445 @@ function parseLRC(text) {
   return out;
 }
 
-/** 隐藏歌词区并清空 5 行（切歌/无歌词时调用）。同时失效当前歌的防抖窗口，
- *  避免"切走再切回同一首歌、且歌词窗口相同"时被防抖误判跳过导致歌词空白 */
+/* =============================================================
+   新歌词引擎（全量滚动列表版）：
+   - DOM 结构：lyric-viewport（裁切+手势） > lyric-list（translateY 平移） > .lyric-item
+   - 几何基准 = 视口几何中心；当前句居中，离中心越远行越小/越淡（收敛视差）
+   - 滑动/滚轮进入「浏览态」，停止 5 秒后自动平滑滚回当前播放句（回位）
+   - 当前句右侧「— ▶」悬浮小按钮 → 点击弹「从此句播放」气泡 → 从此句 seek
+   - 模块级状态统一用 lyr 前缀，避免与文件内其它顶层变量冲突
+   ============================================================= */
+
+// ---- 引擎状态（模块级） ----
+let lyrItems = [];        // 当前歌词 DOM 元素数组（.lyric-item）
+let lyrLrc = null;        // 当前 track._lrc
+let lyrActive = -1;       // 当前播放句下标（-1 表示无）
+let lyrRowH = 0;          // 单行行盒高度 px（= lyricFontSize * 1.45）
+let lyrActiveH = 0;       // 当前句实际行盒高（展开 2 行后 >= lyrRowH，否则 = lyrRowH）
+let lyrViewH = 0;         // viewport 可视高
+let lyrOffset = 0;        // lyric-list 当前 translateY（使某行中心对齐视口中心）
+let lyrFollowing = true;  // true=跟随播放（当前句居中）；false=用户浏览中
+let lyrReturnTimer = null;// 5s 自动回位定时器
+let lyrAnim = null;       // 回位平滑动画 rAF id
+let lyrPointerDrag = null;// { id, startY, startOffset, moved }
+let lyrPopOpen = false;   // 「从此句播放」气泡是否展开
+let lyrVisA = -1, lyrVisB = -1;  // 上次可视行区间（[首, 尾]），用于清理离窗行
+let lyrTransient = false; // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
+let lyrTransientTimer = null;
+const LYR_AUTO_RETURN_MS = 5000; // 浏览停止后自动回位延时
+const LYR_RETURN_MS = 380;       // 回位平滑动画时长
+
+/** 当前设置的歌词字号 px（settings 尚未初始化时给默认 15） */
+function lyricFontSizePx() {
+  return (appSettings && appSettings.lyricFontSize) ? appSettings.lyricFontSize : 15;
+}
+
+// ---- 几何工具 ----
+
+/** 第 i 行相对 lyric-list 顶部的累计顶（px）。active 行若展开 2 行，
+ *  后续行会因多出 (lyrActiveH - lyrRowH) 而整体下移 */
+function lyrTop(i) {
+  return i * lyrRowH + (i > lyrActive ? (lyrActiveH - lyrRowH) : 0);
+}
+
+/** 第 i 行行盒高（px） */
+function lyrRowHeight(i) {
+  return (i === lyrActive) ? lyrActiveH : lyrRowH;
+}
+
+/** 使第 i 行中心对齐视口中心所需的 translateY */
+function lyrCenterOffset(i) {
+  if (!lyrItems || i < 0 || i >= lyrItems.length || lyrViewH <= 0) return lyrOffset;
+  return lyrViewH / 2 - (lyrTop(i) + lyrRowHeight(i) / 2);
+}
+
+/** 把 offset 夹在可浏览范围：[首行居中, 末行居中] */
+function lyrClampOffset(o) {
+  const n = lyrItems ? lyrItems.length : 0;
+  if (!n || lyrViewH <= 0) return o;
+  const max = lyrViewH / 2 - (0 + lyrRowHeight(0) / 2);
+  const min = lyrViewH / 2 - (lyrTop(n - 1) + lyrRowHeight(n - 1) / 2);
+  return Math.max(Math.min(max, o), min);
+}
+
+/** 由 lrc 时间轴 + 播放时刻求当前句下标 */
+function lyrIndexForTime(lrc, time) {
+  let cur = 0;
+  for (let i = 0; i < lrc.length; i++) {
+    if (lrc[i].time <= time) cur = i; else break;
+  }
+  if (cur < 0) cur = 0;
+  if (cur >= lrc.length) cur = lrc.length - 1;
+  return cur;
+}
+
+// ---- 行高测量 / active 切换 ----
+
+/** 把 active 下标设为 idx（expand=true 时允许该行展开成 2 行并实测行高；
+ *  expand=false 用于浏览态：行高保持单行，不让版面跳动） */
+function lyrSetActiveTo(idx, expand) {
+  if (!lyrItems || !lyrItems.length) return;
+  if (idx < 0 || idx >= lyrItems.length) idx = 0;
+  const oldEl = (lyrActive >= 0 && lyrActive < lyrItems.length) ? lyrItems[lyrActive] : null;
+  const newEl = lyrItems[idx];
+  if (oldEl && oldEl !== newEl) {
+    oldEl.classList.remove('active');
+    oldEl.style.height = '';   // 复原 CSS 单行高
+  }
+  if (newEl) {
+    newEl.classList.add('active');
+    newEl.style.height = expand ? 'auto' : '';
+  }
+  lyrActive = idx;
+  if (expand && newEl) {
+    lyrActiveH = newEl.offsetHeight || lyrRowH;  // 强制 reflow 读取真实高度（clamp2 ≤ 2*rowH）
+    if (lyrActiveH < lyrRowH) lyrActiveH = lyrRowH;
+  } else {
+    lyrActiveH = lyrRowH;
+  }
+}
+
+/**
+ * 建立歌词列表：为 lrc 每句生成一个 .lyric-item 并放入 lyric-list。
+ * 保留外部语义：调用方需在随后用 renderLyricWindow 触发首次定位。
+ */
+function buildLyricList(lrc) {
+  if (!lyricList) return;
+  lyrCancelAutoReturn();
+  lyrCancelAnim();
+  lyricList.innerHTML = '';
+  lyrItems = [];
+  lyrLrc = lrc;
+  lyrActive = -1;
+  lyrRowH = Math.max(1, lyricFontSizePx() * 1.45);
+  lyrActiveH = lyrRowH;
+  lyrViewH = lyricViewport ? lyricViewport.clientHeight : 0;
+  const frag = document.createDocumentFragment();
+  for (const line of lrc) {
+    const item = document.createElement('div');
+    item.className = 'lyric-item';
+    item.textContent = line.text;
+    frag.appendChild(item);
+    lyrItems.push(item);
+  }
+  lyricList.appendChild(frag);
+  lyrVisA = -1; lyrVisB = -1;
+  lyrOffset = 0;
+}
+
+/**
+ * 按可视窗口重排样式（每次布局调用）。只触碰可视行；
+ * 离窗行保持 opacity 0；上次在窗、本次离窗的行做清理。
+ * d = 行中心到视口中心的有符号距离；scale/opacity 随 |d| 收敛。
+ */
+function lyrLayout() {
+  if (!lyricList || !lyrItems || !lyrItems.length || lyrViewH <= 0) return;
+  lyricList.style.transform = 'translateY(' + lyrOffset + 'px)';
+  const half = lyrViewH / 2;
+  const n = lyrItems.length;
+  // 计算可视行区间（首行顶在视口上方结束，末行顶越过视口底部终止）
+  let first = -1, last = -1;
+  for (let i = 0; i < n; i++) {
+    const y = lyrTop(i) + lyrOffset;
+    if (y + lyrRowHeight(i) < 0) continue;
+    if (y > lyrViewH) break;
+    if (first < 0) first = i;
+    last = i;
+  }
+  // 清理上次在窗、本次离窗的行
+  if (lyrVisA >= 0) {
+    for (let i = lyrVisA; i <= lyrVisB; i++) {
+      if (first >= 0 && i >= first && i <= last) continue;
+      const el = lyrItems[i];
+      if (el && el._lyrOn) {
+        el.style.opacity = '0';
+        el.style.transform = '';
+        el._lyrOn = false;
+      }
+    }
+  }
+  if (first < 0) { lyrVisA = -1; lyrVisB = -1; return; }
+  // 绘制可视行
+  for (let i = first; i <= last; i++) {
+    const el = lyrItems[i];
+    if (!el) continue;
+    let d = lyrTop(i) + lyrRowHeight(i) / 2 + lyrOffset - half;
+    let nn = d / half;
+    if (nn < -1) nn = -1; else if (nn > 1) nn = 1;
+    const scale = Math.max(0.66, 1 - 0.34 * Math.abs(nn));
+    const opacity = Math.max(0.15, 1 - 0.8 * Math.abs(nn));
+    el.style.transition = lyrTransient ? 'none' : '';
+    el.style.opacity = String(opacity);
+    el.style.transform = 'translateY(0) scale(' + scale.toFixed(4) + ')';
+    el._lyrOn = true;
+  }
+  lyrVisA = first; lyrVisB = last;
+}
+
+/** 字号/宽度变化后的几何重算：行高、可视高、当前句展开实测；随后重定位 */
+function lyricRefreshGeometry() {
+  if (!lyricList || !lyrItems || !lyrItems.length) return;
+  const prevOffset = lyrOffset;
+  lyrRowH = Math.max(1, lyricFontSizePx() * 1.45);
+  lyrViewH = lyricViewport ? lyricViewport.clientHeight : 0;
+  const el = lyrItems[lyrActive];
+  if (el && el.classList.contains('active') && lyrFollowing) {
+    el.style.height = 'auto';
+    lyrActiveH = el.offsetHeight || lyrRowH;
+    if (lyrActiveH < lyrRowH) lyrActiveH = lyrRowH;
+  } else {
+    if (el) el.style.height = '';
+    lyrActiveH = lyrRowH;
+  }
+  if (lyrFollowing && lyrActive >= 0) {
+    lyrOffset = lyrCenterOffset(lyrActive);
+  } else {
+    lyrOffset = lyrClampOffset(prevOffset);
+  }
+  lyrLayout();
+}
+
+// ---- 浏览 / 回位 / 动画 ----
+
+function lyrCancelAutoReturn() {
+  if (lyrReturnTimer) { clearTimeout(lyrReturnTimer); lyrReturnTimer = null; }
+}
+function lyrCancelAnim() {
+  if (lyrAnim) { cancelAnimationFrame(lyrAnim); lyrAnim = null; }
+}
+function lyrScheduleAutoReturn() {
+  lyrCancelAutoReturn();
+  lyrReturnTimer = setTimeout(lyrFireAutoReturn, LYR_AUTO_RETURN_MS);
+}
+
+/** 进入浏览态：停止跟随、清定时器/动画、隐藏悬浮控件 */
+function lyrEnterBrowse() {
+  if (!lyrItems || !lyrItems.length) return;
+  lyrFollowing = false;
+  lyrCancelAutoReturn();
+  lyrCancelAnim();
+  lyrHideJumpUi();
+  lyrTransient = true;
+}
+
+/** 回位：恢复跟随并把当前播放行平滑滚回视口中心 */
+function lyrFireAutoReturn() {
+  lyrCancelAutoReturn();
+  if (!lyrItems || !lyrItems.length) return;
+  if (!lyricSection || lyricSection.classList.contains('hidden')) return;
+  lyrFollowing = true;
+  // 浏览期间歌词可能继续前进：先按播放时钟对齐当前行并实测行高
+  const t = state.playlist[state.currentIndex];
+  let cur = lyrActive;
+  if (t && Array.isArray(t._lrc) && lyrLrc === t._lrc && t._lrc.length === lyrItems.length) {
+    cur = lyrIndexForTime(t._lrc, (audio && isFinite(audio.currentTime)) ? audio.currentTime : 0);
+  }
+  lyrSetActiveTo(cur, true);
+  const from = lyrOffset;
+  const to = lyrClampOffset(lyrCenterOffset(lyrActive));
+  lyrTransient = true;
+  if (Math.abs(to - from) < 1) {
+    lyrOffset = to;
+    lyrTransient = false;
+    lyrLayout();
+    lyrUpdateJumpUi();
+    return;
+  }
+  const t0 = performance.now();
+  const step = (now) => {
+    if (!lyrFollowing) { lyrAnim = null; lyrTransient = false; return; } // 用户再次滑动/播放打断
+    const p = Math.min(1, (now - t0) / LYR_RETURN_MS);
+    const ease = 1 - Math.pow(1 - p, 3);  // easeOutCubic
+    lyrOffset = lyrClampOffset(from + (to - from) * ease);
+    lyrLayout();
+    if (p < 1) {
+      lyrAnim = requestAnimationFrame(step);
+    } else {
+      lyrAnim = null;
+      lyrTransient = false;
+      lyrLayout();
+      lyrUpdateJumpUi();
+    }
+  };
+  lyrAnim = requestAnimationFrame(step);
+}
+
+// ---- 手势（挂在 lyric-viewport：拖拽 / 滚轮） ----
+
+function lyrOnPointerDown(e) {
+  if (!lyricSection || lyricSection.classList.contains('hidden')) return;
+  if (!lyrItems || !lyrItems.length) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  lyrPointerDrag = { id: e.pointerId, startY: e.clientY, startOffset: lyrOffset, moved: false };
+  if (lyricViewport && lyricViewport.setPointerCapture) {
+    try { lyricViewport.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+  lyrEnterBrowse();
+  e.preventDefault();
+}
+function lyrOnPointerMove(e) {
+  if (!lyrPointerDrag || e.pointerId !== lyrPointerDrag.id) return;
+  const dy = e.clientY - lyrPointerDrag.startY;
+  if (!lyrPointerDrag.moved && Math.abs(dy) < 3) return;
+  lyrPointerDrag.moved = true;
+  lyrOffset = lyrClampOffset(lyrPointerDrag.startOffset + dy);
+  lyrLayout();
+}
+function lyrEndPointer(e) {
+  const d = lyrPointerDrag;
+  if (!d) return;
+  lyrPointerDrag = null;
+  if (lyricViewport && lyricViewport.releasePointerCapture) {
+    try { lyricViewport.releasePointerCapture(d.id); } catch (_) {}
+  }
+  if (!d.moved) {          // 仅点击未拖动：不进入浏览，维持跟随
+    lyrFollowing = true;
+    lyrTransient = false;
+    return;
+  }
+  lyrScheduleAutoReturn();
+}
+function lyrOnWheel(e) {
+  if (!lyricSection || lyricSection.classList.contains('hidden')) return;
+  if (!lyrItems || !lyrItems.length) return;
+  if (!lyrFollowing) {
+    lyrCancelAutoReturn();
+    lyrCancelAnim();
+  } else {
+    lyrFollowing = false;
+    lyrHideJumpUi();
+  }
+  const factor = (e.deltaMode === 1) ? 16 : 1;  // Firefox 行模式 → px
+  lyrOffset = lyrClampOffset(lyrOffset - (e.deltaY * factor)); // 滚轮向下 = 看后面的歌词
+  lyrLayout();
+  lyrTransient = true;
+  if (lyrTransientTimer) clearTimeout(lyrTransientTimer);
+  lyrTransientTimer = setTimeout(() => { lyrTransientTimer = null; lyrTransient = false; }, 90);
+  lyrCancelAutoReturn();
+  lyrScheduleAutoReturn();
+  e.preventDefault();
+}
+
+// ---- 悬浮控件：jump 按钮 + 「从此句播放」气泡 ----
+
+function lyrHideJumpUi() {
+  if (lyricJumpBtn) lyricJumpBtn.classList.remove('visible');
+  if (lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
+}
+/** 更新 jump 按钮可见性：歌词区可见 + 有行 + 有当前句 + 处于跟随态 */
+function lyrUpdateJumpUi() {
+  if (!lyricSection || lyricSection.classList.contains('hidden')) {
+    lyrHideJumpUi();
+    return;
+  }
+  const visible = !!(lyrItems && lyrItems.length > 0 && lyrActive >= 0 && lyrFollowing);
+  if (lyricJumpBtn) lyricJumpBtn.classList.toggle('visible', visible);
+  if (!visible && lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
+}
+function lyrOnJumpBtnClick(e) {
+  e.stopPropagation();
+  if (!lyricJumpPop) return;
+  if (lyrPopOpen) {
+    lyrPopOpen = false;
+    lyricJumpPop.classList.add('hidden');
+  } else {
+    lyrPopOpen = true;
+    lyricJumpPop.classList.remove('hidden');
+  }
+}
+function lyrOnJumpPopClick() {
+  if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
+  lyrPopOpen = false;
+  const lrc = lyrLrc;
+  if (!lrc || !lrc.length || lyrActive < 0 || lyrActive >= lrc.length) return;
+  const line = lrc[lyrActive];
+  if (!line || typeof line.time !== 'number') return;
+  const target = line.time;
+  if (audio && isFinite(audio.currentTime)) audio.currentTime = target;
+  if (audio && audio.paused) audio.play();
+  if (!lyrFollowing) lyrFollowing = true; // 兜底：按钮仅在跟随态可见
+  const t = state.playlist[state.currentIndex];
+  if (t && t._lrc === lyrLrc) renderLyricWindow(t, target);
+}
+
+// ---- 事件绑定（元素不存在时静默跳过，兼容不同宿主页面） ----
+if (lyricViewport && window.PointerEvent) {
+  lyricViewport.addEventListener('pointerdown', lyrOnPointerDown, { passive: false });
+  window.addEventListener('pointermove', lyrOnPointerMove, { passive: false });
+  window.addEventListener('pointerup', lyrEndPointer);
+  window.addEventListener('pointercancel', lyrEndPointer);
+}
+if (lyricViewport) {
+  lyricViewport.addEventListener('wheel', lyrOnWheel, { passive: false });
+}
+if (lyricJumpBtn) lyricJumpBtn.addEventListener('click', lyrOnJumpBtnClick);
+if (lyricJumpPop) lyricJumpPop.addEventListener('click', lyrOnJumpPopClick);
+document.addEventListener('pointerdown', (e) => {
+  if (!lyrPopOpen) return;
+  const t = e.target;
+  if (t && t.closest && (t.closest('#lyric-jump-pop') || t.closest('#lyric-jump'))) return;
+  lyrPopOpen = false;
+  if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
+});
+
+/** 隐藏歌词区、清空列表与全部引擎状态（切歌/无歌词时调用）。
+ *  同时失效当前歌的防抖窗口，避免"切走再切回同一首歌、且当前句相同"
+ *  时被防抖误判跳过导致歌词空白 */
 function resetLyricDisplay() {
-  if (!lyricRows.length) return;
-  for (const row of lyricRows) row.textContent = '';
+  lyrCancelAutoReturn();
+  lyrCancelAnim();
+  lyrPointerDrag = null;
+  lyrPopOpen = false;
+  if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
+  lyrTransient = false;
+  if (lyricList) lyricList.innerHTML = '';
   if (lyricSection) lyricSection.classList.add('hidden');
+  lyrHideJumpUi();
+  lyrItems = [];
+  lyrLrc = null;
+  lyrActive = -1;
+  lyrRowH = 0; lyrActiveH = 0; lyrViewH = 0;
+  lyrOffset = 0;
+  lyrFollowing = true;
+  lyrVisA = -1; lyrVisB = -1;
   const t = state.playlist[state.currentIndex];
   if (t) t._lrcWinStart = undefined;
 }
 
 /**
- * 渲染当前时间的歌词窗口：当前句 + 前后各 2 行。
+ * 渲染当前时间的歌词窗口：当前句居中放大，上下逐行缩小变淡。
+ * - 跟随态（lyrFollowing）：切到新行 → 展开实测行高并瞬时定位居中
+ * - 浏览态：只更新当前句下标/高亮，不触发跟随滚动（回位后按此定位与 seek）
+ * - 防抖：当前行未变且无重建需求则跳过（timeupdate 约 4Hz）
  * 无歌词/开关关闭 → 隐藏。
  */
 function renderLyricWindow(track, time) {
-  if (!lyricRows.length) return;
+  if (!lyricList) return;
   const lrc = track && Array.isArray(track._lrc) ? track._lrc : null;
   if (!appSettings.lyricEnabled || !lrc || lrc.length === 0) {
     resetLyricDisplay();
     return;
   }
-  // 当前行 = 最后一个 time <= 当前播放时间
-  let cur = 0;
-  for (let i = 0; i < lrc.length; i++) {
-    if (lrc[i].time <= time) cur = i; else break;
-  }
-  const start = cur - 2;
-  // 防抖：当前窗口未变且歌词区可见则不重绘（timeupdate 约 4Hz）；
-  // 若歌词区刚被 reset 隐藏（hidden），必须强制重绘一次恢复显示
-  if (track._lrcWinStart === start && lyricSection && !lyricSection.classList.contains('hidden')) return;
-  track._lrcWinStart = start;
-  lyricRows.forEach((row, off) => {
-    const idx = start + off;
-    if (idx >= 0 && idx < lrc.length) {
-      row.textContent = lrc[idx].text;
-    } else {
-      row.textContent = '';
-    }
-    row.classList.toggle('lyric-active', off === 2 && idx >= 0 && idx < lrc.length);
-  });
   if (lyricSection) lyricSection.classList.remove('hidden');
+  const needBuild = (lyrLrc !== lrc) || !lyrItems || lyrItems.length === 0;
+  const cur = lyrIndexForTime(lrc, time);
+  if (!needBuild && cur === lyrActive) {
+    return;  // 防抖：当前句未变即跳过（回位动画由 rAF 自行推进）
+  }
+  track._lrcWinStart = cur;  // 防抖窗口语义：记录当前句下标
+  if (needBuild) {
+    buildLyricList(lrc);
+    lyrViewH = lyricViewport ? lyricViewport.clientHeight : 0;
+  }
+  if (lyrFollowing) {
+    lyrCancelAnim();  // 打断进行中的回位动画，直接硬定位
+    lyrSetActiveTo(cur, true);
+    lyrOffset = lyrClampOffset(lyrCenterOffset(cur));
+  } else {
+    lyrSetActiveTo(cur, false);   // 浏览中只移高亮，保持行高单行，不挪动版面
+  }
+  lyrLayout();
+  lyrUpdateJumpUi();
 }
 
 /** 加载当前 SAF 歌曲的同目录 .lrc 歌词（异步，带切歌竞态保护）
@@ -1048,6 +1452,37 @@ async function loadLyrics(track) {
   if (state.playlist[state.currentIndex] !== track) return;
   renderLyricWindow(track, audio.currentTime || 0);
 }
+
+/** 调试钩子（QA / 排查用）：无歌词或无元素时调用不抛错 */
+window.__lyricDebug = {
+  get state() {
+    return {
+      active: lyrActive,
+      following: lyrFollowing,
+      offset: lyrOffset,
+      count: lyrItems ? lyrItems.length : 0,
+      viewH: lyrViewH,
+      rowH: lyrRowH,
+    };
+  },
+  setTime(t) {
+    const tr = state.playlist[state.currentIndex];
+    if (!tr || !lyricSection || lyricSection.classList.contains('hidden')) return;
+    renderLyricWindow(tr, (typeof t === 'number' && isFinite(t)) ? t : 0);
+  },
+  fireAutoReturn() {
+    lyrFireAutoReturn();
+  },
+  getItemRect(i) {
+    const el = lyrItems && lyrItems[i];
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, center: r.top + r.height / 2, height: r.height };
+  },
+  centerOffsetOf(i) {
+    return lyrCenterOffset(i);
+  },
+};
 
 // =====================================================
 // 桌面壁纸背景
@@ -1378,6 +1813,8 @@ window.addEventListener('resize', () => {
   if (state.playlist.length > 0) {
     renderVisibleItems();
   }
+  // 窗口尺寸变化：重算歌词几何并重定位（行高/可视高可能已变）
+  lyricRefreshGeometry();
 });
 
 // ==============================
@@ -1646,6 +2083,8 @@ function applySettings() {
   root.setProperty('--lyric-size', (appSettings.lyricFontSize || 15) + 'px');
   root.setProperty('--lyric-color', appSettings.lyricColor || '#ffffff');
   if (lyricSection) lyricSection.classList.toggle('rainbow', !!(appSettings.lyricEnabled && appSettings.lyricRainbow));
+  // 歌词几何（行高/可视高/当前句展开实测）随字号等设置变化联动
+  lyricRefreshGeometry();
   applyAppTitle();
   updateBgVeil();
 }
@@ -1929,13 +2368,26 @@ async function applyBackground() {
   el.style.backgroundColor = 'transparent';
 }
 
-// 壁纸模糊遮罩：仅当壁纸内容在 WebView 内（system/image/solid）且「模糊」开启时启用。
-// live 模式的动态壁纸是透明窗口外的系统层，CSS backdrop-filter 无法采样 → 停用，保持壁纸清晰直出。
+// 壁纸模糊遮罩：system/image/solid 模式壁纸在 WebView 内 → CSS .bg-veil 遮罩模糊。
+// live 模式（第三方动态壁纸）是透明窗口外的系统层 → CSS 无法采样，
+// 改由原生 WindowManager blur-behind（Android 12+）模糊窗口背后的壁纸层。
 function updateBgVeil() {
   const veil = document.getElementById('bg-veil');
-  if (!veil) return;
-  const off = !appSettings.blurOn || bgState.source === 'live';
-  veil.classList.toggle('off', off);
+  const isLive = bgState.source === 'live';
+  if (veil) veil.classList.toggle('off', !appSettings.blurOn || isLive);
+  // live：把「模糊」强度同步到原生层；非 live/关闭时归零，避免误模糊其它内容
+  const nativeBlur = isLive && appSettings.blurOn ? appSettings.blurPx : 0;
+  syncLiveBlur(nativeBlur);
+}
+
+// 调用原生 blur-behind（仅 Capacitor/Android 生效；浏览器/桌面无此插件则忽略）
+function syncLiveBlur(radiusPx) {
+  try {
+    const wp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WallpaperPlugin;
+    if (wp && typeof wp.setLiveBlur === 'function') {
+      wp.setLiveBlur({ radius: radiusPx || 0 });
+    }
+  } catch (e) { /* 非 Android 环境无此能力，静默忽略 */ }
 }
 
 async function applySystemWallpaper(el) {

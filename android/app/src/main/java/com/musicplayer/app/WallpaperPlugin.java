@@ -5,9 +5,11 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.util.Base64;
 import android.util.Log;
+import android.view.WindowManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -24,11 +26,48 @@ import java.io.FileInputStream;
  *   注意：当第三方「动态壁纸」激活时，系统静态壁纸通常是默认图，
  *   因此本方法拿到的不是动态那张（Android 限制）。
  * - exitApp(): 用户拒绝协议时退出应用。
+ * - setLiveBlur(radius): 第三方动态壁纸（live 模式）窗口级模糊。
+ *   利用 Android 12+ (API 31) WindowManager 的 blur-behind 能力，
+ *   直接模糊窗口背后的系统壁纸层（CSS backdrop-filter 做不到的正是这层）。
  */
 @CapacitorPlugin(name = "WallpaperPlugin")
 public class WallpaperPlugin extends Plugin {
 
     private static final String TAG = "WallpaperPlugin";
+
+    /** 设置 live 模式窗口背后模糊半径（0=关闭）。仅 Android 12+ 有效，旧版本静默忽略。 */
+    @PluginMethod
+    public void setLiveBlur(PluginCall call) {
+        try {
+            int radius = call.getInt("radius", 0);
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                // API 31 以下不支持 blur-behind，直接成功返回（保持现状：live 清晰）
+                call.resolve();
+                return;
+            }
+            final int r = Math.max(0, Math.min(150, radius));
+            getActivity().runOnUiThread(() -> {
+                try {
+                    WindowManager.LayoutParams lp = getActivity().getWindow().getAttributes();
+                    if (r > 0) {
+                        lp.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+                    } else {
+                        lp.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+                    }
+                    lp.setBlurBehindRadius(r);
+                    getActivity().getWindow().setAttributes(lp);
+                    Log.d(TAG, "setLiveBlur radius=" + r);
+                    call.resolve();
+                } catch (Exception e) {
+                    Log.e(TAG, "setLiveBlur failed: " + e.getMessage());
+                    call.reject("设置壁纸模糊失败: " + e.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "setLiveBlur error: " + e.getMessage());
+            call.reject("设置壁纸模糊失败: " + e.getMessage());
+        }
+    }
 
     /** 取系统静态壁纸为 base64（用于「系统背景」模式） */
     @PluginMethod

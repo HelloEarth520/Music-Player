@@ -86,8 +86,8 @@
   ];
 
   let currentFolderIdx = 0, currentTrackIdx = 0, isPlaying = false, curTime = 0, playTimer = null;
-  // v2.16 状态：封面旋转 / 歌词显示（含滚动行）
-  let coverRotOn = true, lyricEnabled = true, lyricIdx = 0;
+  // v2.16 状态：封面旋转 / 歌词显示
+  let coverRotOn = true, lyricEnabled = true;
 
   /* ---------- 音乐目录（切换文件夹同步刷新歌曲） ---------- */
   const dl = $("#dir-list");
@@ -129,8 +129,15 @@
     $$(".playlist-item").forEach((x, i) => x.classList.toggle("active", i === currentTrackIdx));
   }
 
-  /* ---------- v2.16 歌词区：演示歌词随播放滚动（最近 5 行） ---------- */
-  const lyricRows = $$("#lyric-section .lyric-row");
+  /* ---------- v2.16 歌词区：全量滚动列表（mock 驱动，行为对齐 www/player.js 引擎） ----------
+     当前句始终居中放大、上下收敛视差；可滑动/滚轮浏览，停止 5 秒自动回位；
+     当前行右侧「— ▶」悬浮钮 → 弹出「从此句播放」气泡 → curTime 定位到该句（模拟 seek） */
+  const lyricSection = $("#lyric-section");
+  const lyricViewport = $("#lyric-viewport");
+  const lyricList = $("#lyric-list");
+  const lyricJumpBtn = $("#lyric-jump");
+  const lyricJumpPop = $("#lyric-jump-pop");
+
   const FAKE_LYRICS = [
     "晚风穿过整座城市的灯光",
     "把心事折成纸飞机 扔向远方",
@@ -145,23 +152,423 @@
     "世界很大 大到忘了方向",
     "还好有这一首歌 陪在身旁",
   ];
-  function renderLyrics() {
-    const sec = $("#lyric-section");
-    if (!sec) return;
-    if (!lyricEnabled) { sec.classList.add("hidden"); return; }
-    sec.classList.remove("hidden");
-    lyricRows.forEach((row, ri) => {
-      const line = FAKE_LYRICS[lyricIdx + ri - 2] || "";
-      if (row.textContent !== line) row.textContent = line;
-      row.classList.toggle("lyric-active", ri === 2);
+
+  // 歌词引擎状态（模块级，lyr 前缀）
+  let lyrItems = [];          // .lyric-item DOM 数组
+  let lyrLrc = null;          // { time: i*2, text } 假想时间轴
+  let lyrActive = -1;         // 当前句下标
+  let lyrRowH = 0;            // 单行行盒高 px
+  let lyrActiveH = 0;         // 当前句实际行盒高（展开 2 行后 ≥ lyrRowH）
+  let lyrViewH = 0;           // viewport 可视高
+  let lyrOffset = 0;          // lyric-list translateY
+  let lyrFollowing = true;    // true=跟随播放；false=用户浏览中
+  let lyrReturnTimer = null;  // 5s 自动回位定时器
+  let lyrAnim = null;         // 回位动画 rAF
+  let lyrPointerDrag = null;  // { id, startY, startOffset, moved }
+  let lyrPopOpen = false;     // 「从此句播放」气泡是否展开
+  let lyrVisA = -1, lyrVisB = -1;
+  let lyrTransient = false;   // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
+  let lyrTransientTimer = null;
+  let lyricFontSize = 15;     // mock 字号（设置输入框同步，几何用）
+  const LYR_AUTO_RETURN_MS = 5000;
+  const LYR_RETURN_MS = 380;
+
+  // 当前句下标：clamp(floor(curTime/2))（每 2 秒一句的假想时间轴）
+  function lyrIdxForTime(t) {
+    const n = FAKE_LYRICS.length;
+    return Math.max(0, Math.min(n - 1, Math.floor(t / 2)));
+  }
+
+  // ---- 几何工具（与 www/player.js 引擎同公式） ----
+  function lyrTop(i) {
+    return i * lyrRowH + (i > lyrActive ? (lyrActiveH - lyrRowH) : 0);
+  }
+  function lyrRowHeight(i) {
+    return (i === lyrActive) ? lyrActiveH : lyrRowH;
+  }
+  function lyrCenterOffset(i) {
+    if (!lyrItems || i < 0 || i >= lyrItems.length || lyrViewH <= 0) return lyrOffset;
+    return lyrViewH / 2 - (lyrTop(i) + lyrRowHeight(i) / 2);
+  }
+  function lyrClampOffset(o) {
+    const n = lyrItems ? lyrItems.length : 0;
+    if (!n || lyrViewH <= 0) return o;
+    const max = lyrViewH / 2 - (0 + lyrRowHeight(0) / 2);
+    const min = lyrViewH / 2 - (lyrTop(n - 1) + lyrRowHeight(n - 1) / 2);
+    return Math.max(Math.min(max, o), min);
+  }
+
+  // ---- 建列表 / active 切换 / 布局 ----
+  function buildLyricList() {
+    if (!lyricList) return;
+    lyrCancelAutoReturn();
+    lyrCancelAnim();
+    lyricList.innerHTML = "";
+    lyrItems = [];
+    lyrLrc = FAKE_LYRICS.map((txt, i) => ({ time: i * 2, text: txt }));
+    lyrActive = -1;
+    lyrRowH = Math.max(1, lyricFontSize * 1.45);
+    lyrActiveH = lyrRowH;
+    lyrViewH = lyricViewport ? lyricViewport.clientHeight : 0;
+    const frag = document.createDocumentFragment();
+    FAKE_LYRICS.forEach((txt) => {
+      const item = document.createElement("div");
+      item.className = "lyric-item";
+      item.textContent = txt;
+      frag.appendChild(item);
+      lyrItems.push(item);
     });
+    lyricList.appendChild(frag);
+    lyrVisA = -1; lyrVisB = -1;
+    lyrOffset = 0;
   }
-  // 进度/切歌后同步歌词行（每行约 2 秒）
+  function lyrSetActiveTo(idx, expand) {
+    if (!lyrItems || !lyrItems.length) return;
+    if (idx < 0 || idx >= lyrItems.length) idx = 0;
+    const oldEl = (lyrActive >= 0 && lyrActive < lyrItems.length) ? lyrItems[lyrActive] : null;
+    const newEl = lyrItems[idx];
+    if (oldEl && oldEl !== newEl) {
+      oldEl.classList.remove("active");
+      oldEl.style.height = "";
+    }
+    if (newEl) {
+      newEl.classList.add("active");
+      newEl.style.height = expand ? "auto" : "";
+    }
+    lyrActive = idx;
+    if (expand && newEl) {
+      lyrActiveH = newEl.offsetHeight || lyrRowH;
+      if (lyrActiveH < lyrRowH) lyrActiveH = lyrRowH;
+    } else {
+      lyrActiveH = lyrRowH;
+    }
+  }
+  function lyrLayout() {
+    if (!lyricList || !lyrItems || !lyrItems.length || lyrViewH <= 0) return;
+    lyricList.style.transform = "translateY(" + lyrOffset + "px)";
+    const half = lyrViewH / 2;
+    const n = lyrItems.length;
+    let first = -1, last = -1;
+    for (let i = 0; i < n; i++) {
+      const y = lyrTop(i) + lyrOffset;
+      if (y + lyrRowHeight(i) < 0) continue;
+      if (y > lyrViewH) break;
+      if (first < 0) first = i;
+      last = i;
+    }
+    if (lyrVisA >= 0) {
+      for (let i = lyrVisA; i <= lyrVisB; i++) {
+        if (first >= 0 && i >= first && i <= last) continue;
+        const el = lyrItems[i];
+        if (el && el._lyrOn) {
+          el.style.opacity = "0";
+          el.style.transform = "";
+          el._lyrOn = false;
+        }
+      }
+    }
+    if (first < 0) { lyrVisA = -1; lyrVisB = -1; return; }
+    for (let i = first; i <= last; i++) {
+      const el = lyrItems[i];
+      if (!el) continue;
+      let d = lyrTop(i) + lyrRowHeight(i) / 2 + lyrOffset - half;
+      let nn = d / half;
+      if (nn < -1) nn = -1; else if (nn > 1) nn = 1;
+      const scale = Math.max(0.66, 1 - 0.34 * Math.abs(nn));
+      const opacity = Math.max(0.15, 1 - 0.8 * Math.abs(nn));
+      el.style.transition = lyrTransient ? "none" : "";
+      el.style.opacity = String(opacity);
+      el.style.transform = "translateY(0) scale(" + scale.toFixed(4) + ")";
+      el._lyrOn = true;
+    }
+    lyrVisA = first; lyrVisB = last;
+  }
+  // 字号/尺寸变化后重算几何（行高/可视高/当前句实测高度）
+  function lyricRefreshGeometry() {
+    if (!lyricList || !lyrItems || !lyrItems.length) return;
+    const prevOffset = lyrOffset;
+    lyrRowH = Math.max(1, lyricFontSize * 1.45);
+    lyrViewH = lyricViewport ? lyricViewport.clientHeight : 0;
+    const el = lyrItems[lyrActive];
+    if (el && el.classList.contains("active") && lyrFollowing) {
+      el.style.height = "auto";
+      lyrActiveH = el.offsetHeight || lyrRowH;
+      if (lyrActiveH < lyrRowH) lyrActiveH = lyrRowH;
+    } else {
+      if (el) el.style.height = "";
+      lyrActiveH = lyrRowH;
+    }
+    if (lyrFollowing && lyrActive >= 0) {
+      lyrOffset = lyrCenterOffset(lyrActive);
+    } else {
+      lyrOffset = lyrClampOffset(prevOffset);
+    }
+    lyrLayout();
+  }
+
+  // ---- 浏览 / 回位 / 动画 ----
+  function lyrCancelAutoReturn() {
+    if (lyrReturnTimer) { clearTimeout(lyrReturnTimer); lyrReturnTimer = null; }
+  }
+  function lyrCancelAnim() {
+    if (lyrAnim) { cancelAnimationFrame(lyrAnim); lyrAnim = null; }
+  }
+  function lyrScheduleAutoReturn() {
+    lyrCancelAutoReturn();
+    lyrReturnTimer = setTimeout(lyrFireAutoReturn, LYR_AUTO_RETURN_MS);
+  }
+  function lyrEnterBrowse() {
+    if (!lyrItems || !lyrItems.length) return;
+    lyrFollowing = false;
+    lyrCancelAutoReturn();
+    lyrCancelAnim();
+    lyrHideJumpUi();
+    lyrTransient = true;
+  }
+  function lyrFireAutoReturn() {
+    lyrCancelAutoReturn();
+    if (!lyrItems || !lyrItems.length) return;
+    if (!lyricSection || lyricSection.classList.contains("hidden") || !lyricEnabled) return;
+    lyrFollowing = true;
+    const cur = lyrIdxForTime(curTime);   // 浏览期间播放可能前进，回到最新行（并实测行高）
+    lyrSetActiveTo(cur, true);
+    const from = lyrOffset;
+    const to = lyrClampOffset(lyrCenterOffset(lyrActive));
+    lyrTransient = true;
+    if (Math.abs(to - from) < 1) {
+      lyrOffset = to;
+      lyrTransient = false;
+      lyrLayout();
+      lyrUpdateJumpUi();
+      return;
+    }
+    const t0 = performance.now();
+    const step = (now) => {
+      if (!lyrFollowing) { lyrAnim = null; lyrTransient = false; return; }
+      const p = Math.min(1, (now - t0) / LYR_RETURN_MS);
+      const ease = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      lyrOffset = lyrClampOffset(from + (to - from) * ease);
+      lyrLayout();
+      if (p < 1) {
+        lyrAnim = requestAnimationFrame(step);
+      } else {
+        lyrAnim = null;
+        lyrTransient = false;
+        lyrLayout();
+        lyrUpdateJumpUi();
+      }
+    };
+    lyrAnim = requestAnimationFrame(step);
+  }
+
+  // ---- 手势：拖拽 / 滚轮（挂在 lyric-viewport） ----
+  function lyrOnPointerDown(e) {
+    if (!lyricEnabled || !lyricSection || lyricSection.classList.contains("hidden")) return;
+    if (!lyrItems || !lyrItems.length) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    lyrPointerDrag = { id: e.pointerId, startY: e.clientY, startOffset: lyrOffset, moved: false };
+    if (lyricViewport && lyricViewport.setPointerCapture) {
+      try { lyricViewport.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    lyrEnterBrowse();
+    e.preventDefault();
+  }
+  function lyrOnPointerMove(e) {
+    if (!lyrPointerDrag || e.pointerId !== lyrPointerDrag.id) return;
+    const dy = e.clientY - lyrPointerDrag.startY;
+    if (!lyrPointerDrag.moved && Math.abs(dy) < 3) return;
+    lyrPointerDrag.moved = true;
+    lyrOffset = lyrClampOffset(lyrPointerDrag.startOffset + dy);
+    lyrLayout();
+  }
+  function lyrEndPointer(e) {
+    const d = lyrPointerDrag;
+    if (!d) return;
+    lyrPointerDrag = null;
+    if (lyricViewport && lyricViewport.releasePointerCapture) {
+      try { lyricViewport.releasePointerCapture(d.id); } catch (_) {}
+    }
+    if (!d.moved) {
+      lyrFollowing = true;
+      lyrTransient = false;
+      return;
+    }
+    lyrScheduleAutoReturn();
+  }
+  function lyrOnWheel(e) {
+    if (!lyricEnabled || !lyricSection || lyricSection.classList.contains("hidden")) return;
+    if (!lyrItems || !lyrItems.length) return;
+    if (!lyrFollowing) {
+      lyrCancelAutoReturn();
+      lyrCancelAnim();
+    } else {
+      lyrFollowing = false;
+      lyrHideJumpUi();
+    }
+    const factor = (e.deltaMode === 1) ? 16 : 1;   // Firefox 行模式 → px
+    lyrOffset = lyrClampOffset(lyrOffset - (e.deltaY * factor)); // 滚轮向下 = 看后面的歌词
+    lyrLayout();
+    lyrTransient = true;
+    if (lyrTransientTimer) clearTimeout(lyrTransientTimer);
+    lyrTransientTimer = setTimeout(() => { lyrTransientTimer = null; lyrTransient = false; }, 90);
+    lyrCancelAutoReturn();
+    lyrScheduleAutoReturn();
+    e.preventDefault();
+  }
+
+  // ---- 悬浮控件：jump 按钮 + 「从此句播放」气泡 ----
+  function lyrHideJumpUi() {
+    if (lyricJumpBtn) lyricJumpBtn.classList.remove("visible");
+    if (lyricJumpPop) { lyricJumpPop.classList.add("hidden"); lyrPopOpen = false; }
+  }
+  function lyrUpdateJumpUi() {
+    if (!lyricSection || lyricSection.classList.contains("hidden") || !lyricEnabled) {
+      lyrHideJumpUi();
+      return;
+    }
+    const visible = !!(lyrItems && lyrItems.length > 0 && lyrActive >= 0 && lyrFollowing);
+    if (lyricJumpBtn) lyricJumpBtn.classList.toggle("visible", visible);
+    if (!visible && lyricJumpPop) { lyricJumpPop.classList.add("hidden"); lyrPopOpen = false; }
+  }
+  function lyrOnJumpBtnClick(e) {
+    e.stopPropagation();
+    if (!lyricJumpPop) return;
+    if (lyrPopOpen) {
+      lyrPopOpen = false;
+      lyricJumpPop.classList.add("hidden");
+    } else {
+      lyrPopOpen = true;
+      lyricJumpPop.classList.remove("hidden");
+    }
+  }
+  function lyrOnJumpPopClick() {
+    if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
+    lyrPopOpen = false;
+    const lrc = lyrLrc;
+    if (!lrc || !lrc.length || lyrActive < 0 || lyrActive >= lrc.length) return;
+    // demo 无真实音频：seek 语义 = 把 curTime 定位到该句起点，并保持/进入"播放中"假象
+    const target = lrc[lyrActive].time;
+    if (curTime !== target) { curTime = target; updateProgress(); }
+    if (!isPlaying) setPlaying(true);
+    if (!lyrFollowing) lyrFollowing = true;
+    syncLyrics();
+  }
+
+  // 事件绑定
+  if (lyricViewport && window.PointerEvent) {
+    lyricViewport.addEventListener("pointerdown", lyrOnPointerDown, { passive: false });
+    window.addEventListener("pointermove", lyrOnPointerMove, { passive: false });
+    window.addEventListener("pointerup", lyrEndPointer);
+    window.addEventListener("pointercancel", lyrEndPointer);
+  }
+  if (lyricViewport) {
+    lyricViewport.addEventListener("wheel", lyrOnWheel, { passive: false });
+  }
+  if (lyricJumpBtn) lyricJumpBtn.addEventListener("click", lyrOnJumpBtnClick);
+  if (lyricJumpPop) lyricJumpPop.addEventListener("click", lyrOnJumpPopClick);
+  document.addEventListener("pointerdown", (e) => {
+    if (!lyrPopOpen) return;
+    const t = e.target;
+    if (t && t.closest && (t.closest("#lyric-jump-pop") || t.closest("#lyric-jump"))) return;
+    lyrPopOpen = false;
+    if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
+  });
+
+  // 隐藏歌词区并清空引擎状态（开关关闭 / 无歌词时）
+  function resetDemoLyrics() {
+    lyrCancelAutoReturn();
+    lyrCancelAnim();
+    lyrPointerDrag = null;
+    lyrPopOpen = false;
+    if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
+    lyrTransient = false;
+    if (lyricList) lyricList.innerHTML = "";
+    if (lyricSection) lyricSection.classList.add("hidden");
+    lyrHideJumpUi();
+    lyrItems = [];
+    lyrLrc = null;
+    lyrActive = -1;
+    lyrRowH = 0; lyrActiveH = 0; lyrViewH = 0;
+    lyrOffset = 0;
+    lyrFollowing = true;
+    lyrVisA = -1; lyrVisB = -1;
+  }
+
+  /** 开关/切歌/初始化入口：显示歌词并定位到当前句（curTime 驱动） */
+  function renderLyrics() {
+    if (!lyricSection) return;
+    if (!lyricEnabled) { resetDemoLyrics(); return; }
+    lyricSection.classList.remove("hidden");   // 先可见再测量（viewport 高度）
+    if (!lyrItems || !lyrItems.length) buildLyricList();
+    lyrFollowing = true;
+    lyrCancelAutoReturn();
+    lyrCancelAnim();
+    const idx = lyrIdxForTime(curTime);
+    lyrSetActiveTo(idx, true);
+    lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+    lyrLayout();
+    lyrUpdateJumpUi();
+  }
+
+  // 进度推进/拖动后同步歌词行（每句约 2 秒；跟随/浏览语义对齐 www 引擎）
   function syncLyrics() {
-    if (!lyricEnabled) return;
-    const li = Math.max(0, Math.min(FAKE_LYRICS.length - 1, Math.floor(curTime / 2)));
-    if (li !== lyricIdx) { lyricIdx = li; renderLyrics(); }
+    if (!lyricEnabled || !lyrItems || !lyrItems.length) return;
+    const sec = $("#lyric-section");
+    if (!sec || sec.classList.contains("hidden")) return;
+    const idx = lyrIdxForTime(curTime);
+    if (idx === lyrActive) return;  // 防抖：当前句未变即跳过（回位动画由 rAF 自行推进）
+    if (lyrFollowing) {
+      if (idx !== lyrActive) {
+        lyrCancelAnim();
+        lyrSetActiveTo(idx, true);
+        lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+      }
+    } else if (idx !== lyrActive) {
+      lyrSetActiveTo(idx, false);   // 浏览中只移高亮，不挪动版面
+    }
+    lyrLayout();
+    lyrUpdateJumpUi();
   }
+
+  /** 调试钩子（QA / 排查用）：无歌词或无元素时调用不抛错 */
+  window.__lyricDebug = {
+    get state() {
+      return {
+        active: lyrActive,
+        following: lyrFollowing,
+        offset: lyrOffset,
+        count: lyrItems ? lyrItems.length : 0,
+        viewH: lyrViewH,
+        rowH: lyrRowH,
+      };
+    },
+    setTime(t) {
+      if (!lyricEnabled) return;
+      if (!lyricSection || lyricSection.classList.contains("hidden")) return;
+      if (!lyrItems || !lyrItems.length) buildLyricList();
+      lyricSection.classList.remove("hidden");
+      lyrFollowing = true;
+      lyrCancelAutoReturn();
+      lyrCancelAnim();
+      const idx = lyrIdxForTime(typeof t === "number" && isFinite(t) ? t : curTime);
+      lyrSetActiveTo(idx, true);
+      lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+      lyrLayout();
+      lyrUpdateJumpUi();
+    },
+    fireAutoReturn() {
+      lyrFireAutoReturn();
+    },
+    getItemRect(i) {
+      const el = lyrItems && lyrItems[i];
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, center: r.top + r.height / 2, height: r.height };
+    },
+    centerOffsetOf(i) {
+      return lyrCenterOffset(i);
+    },
+  };
 
   /* ---------- v2.16 封面旋转：无真实封面，生成渐变假封面展示旋转效果 ---------- */
   const coverArtCache = {};
@@ -215,7 +622,6 @@
     curTime = 0;
     updateProgress();
     updateActiveItem();
-    lyricIdx = 0;
     renderLyrics();
     updateCoverArt();
   }
@@ -525,7 +931,9 @@
   if (lyricSizeInput) lyricSizeInput.addEventListener("change", (e) => {
     const v = Math.max(10, Math.min(28, parseInt(e.target.value, 10) || 15));
     e.target.value = v;
+    lyricFontSize = v;
     document.documentElement.style.setProperty("--lyric-size", v + "px");
+    lyricRefreshGeometry();   // 字号变化：重算行高/可视高并重定位
   });
   const lyricColorInput = $("#set-lyric-color");
   if (lyricColorInput) lyricColorInput.addEventListener("input", (e) =>
@@ -635,7 +1043,10 @@
   showOverlay("#agreement-overlay");
   if (canvas) {
     resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("resize", () => {
+      resizeCanvas();
+      lyricRefreshGeometry();   // 窗口尺寸变化：歌词几何联动
+    });
     requestAnimationFrame(drawEQ);
   }
 })();
