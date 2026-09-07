@@ -25,15 +25,16 @@
   <div class="app">
     <!-- 顶部标题栏 -->
     <header class="titlebar">
+      <button id="btn-drawer" class="btn-drawer hidden" title="播放列表" aria-label="播放列表"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <span class="logo">
         <span id="logo-mark">🎵</span><span id="logo-text">MusicPlayer-一切皆可自定</span>
       </span>
       <span id="header-clock" class="header-clock">--:--:--</span>
       <div class="header-actions">
-        <button id="btn-open-file" title="打开文件">📂 打开文件</button>
-        <button id="btn-open-folder" title="打开文件夹">📁 打开文件夹</button>
-        <button id="btn-transcode" class="btn-transcode-header" title="转码工具">⚙️ 转码</button>
-        <button id="btn-equalizer" class="btn-equalizer-header" title="均衡器">🎚️ 均衡器</button>
+        <button id="btn-open-file" title="打开文件">📂 <span class="lbl">打开文件</span></button>
+        <button id="btn-open-folder" title="打开文件夹">📁 <span class="lbl">打开文件夹</span></button>
+        <button id="btn-transcode" class="btn-transcode-header" title="转码工具">⚙️ <span class="lbl">转码</span></button>
+        <button id="btn-equalizer" class="btn-equalizer-header" title="均衡器">🎚️ <span class="lbl">均衡器</span></button>
         <button id="btn-settings" class="btn-settings-header" title="设置" aria-label="设置">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -77,6 +78,8 @@
             </span>
           </div>
         </div>
+
+        <div class="player-main-right">
 
         <!-- 歌曲信息 -->
         <div class="track-info">
@@ -188,8 +191,12 @@
           支持格式：MP3 · FLAC · WAV · OGG · AAC · M4A · OPUS · WebM · WMA · APE（部分）
           &nbsp;|&nbsp; 内置 FFmpeg 转码引擎
         </div>
+
+        </div>
       </main>
     </div>
+    <!-- 抽屉遮罩：仅窄屏启用，点击遮罩关闭播放列表抽屉 -->
+    <div id="drawer-mask" class="drawer-mask hidden"></div>
   </div>
 
   <!-- ===================== 均衡器面板 Modal ===================== -->
@@ -632,7 +639,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.17.0</span>
+        <span class="settings-version">v2.18.0</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>
