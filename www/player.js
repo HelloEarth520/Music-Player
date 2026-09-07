@@ -3100,3 +3100,46 @@ if (btnAddDir) {
 }
 
 console.log('[Dir] 目录管理模块已加载，已保存', savedDirs.length, '个目录');
+
+// ==============================
+// Mobile drawer (v2.18)
+// 播放列表抽屉开关（仅窄屏生效；桌面 ≥1024px 抽屉按钮不可见但逻辑保留，
+// 任一相关 id 缺失都不会抛错，也不改写既有点击播放逻辑）：
+// - 点顶栏「≡」→ 切换 .app.drawer-open（滑出/收起由 CSS 呈现）
+// - 点半透明遮罩 / 播放列表任一首 / 音乐目录任一项 / 按 Esc → 关闭
+// ==============================
+(function () {
+  'use strict';
+  const appEl = document.querySelector('.app');
+  const drawerBtn = document.getElementById('btn-drawer');
+  const drawerMask = document.getElementById('drawer-mask');
+  const drawerPlaylist = document.getElementById('playlist');
+  const drawerDirList = document.getElementById('dir-list');
+  if (!appEl) return;
+
+  const drawerIsOpen = () => appEl.classList.contains('drawer-open');
+  const drawerSetOpen = (open) => appEl.classList.toggle('drawer-open', open);
+  const drawerClose = () => drawerSetOpen(false);
+
+  if (drawerBtn) {
+    drawerBtn.addEventListener('click', () => drawerSetOpen(!drawerIsOpen()));
+  }
+  if (drawerMask) {
+    drawerMask.addEventListener('click', drawerClose);
+  }
+  // 曲目/目录项是动态重建的，用容器级事件委托附加关闭监听即可
+  if (drawerPlaylist) {
+    drawerPlaylist.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('.playlist-item')) drawerClose();
+    });
+  }
+  if (drawerDirList) {
+    drawerDirList.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('.dir-item')) drawerClose();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' || e.key === 'Escape') drawerClose();
+  });
+})();
+

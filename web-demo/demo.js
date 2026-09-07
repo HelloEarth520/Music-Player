@@ -1050,3 +1050,42 @@
     requestAnimationFrame(drawEQ);
   }
 })();
+
+/* ---------- Mobile drawer (v2.18)：复刻 www/player.js 抽屉开关 ----------
+   仅窄屏生效；桌面 ≥1024px 抽屉按钮不可见但逻辑保留。
+   点「≡」切换 .app.drawer-open；点遮罩 / 播放列表任一首 / 目录任一项 / Esc → 关闭。
+   曲目/目录项为动态重建，用容器级委托附加监听，不改写 demo 自身切换逻辑。 */
+(function () {
+  "use strict";
+  const $m = (id) => document.getElementById(id);
+  const appEl = document.querySelector(".app");
+  const drawerBtn = $m("btn-drawer");
+  const drawerMask = $m("drawer-mask");
+  if (!appEl) return;
+
+  const drawerIsOpen = () => appEl.classList.contains("drawer-open");
+  const drawerSetOpen = (open) => appEl.classList.toggle("drawer-open", open);
+  const drawerClose = () => drawerSetOpen(false);
+
+  if (drawerBtn) {
+    drawerBtn.addEventListener("click", () => drawerSetOpen(!drawerIsOpen()));
+  }
+  if (drawerMask) {
+    drawerMask.addEventListener("click", drawerClose);
+  }
+  const drawerPlaylist = $m("playlist");
+  if (drawerPlaylist) {
+    drawerPlaylist.addEventListener("click", (e) => {
+      if (e.target && e.target.closest && e.target.closest(".playlist-item")) drawerClose();
+    });
+  }
+  const drawerDirList = $m("dir-list");
+  if (drawerDirList) {
+    drawerDirList.addEventListener("click", (e) => {
+      if (e.target && e.target.closest && e.target.closest(".dir-item")) drawerClose();
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Escape" || e.key === "Escape") drawerClose();
+  });
+})();

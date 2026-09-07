@@ -915,7 +915,7 @@ html, body {
    Responsive
    ============================ */
 @media (max-width: 640px) {
-  .playlist-panel { display: none; }
+  /* v2.18：左侧栏不再隐藏，已由 Mobile Responsive 段的抽屉接管 */
   .player-main { padding: 28px 20px; }
   .cover { width: 160px; height: 160px; }
 }
@@ -1999,3 +1999,175 @@ html, body {
 .crop-btn.cancel:hover { color: #fff; border-color: rgba(255,255,255,0.4); }
 .crop-btn.ok { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border: none; font-weight: 600; }
 .crop-btn.ok:hover { opacity: 0.9; }
+
+/* ============================
+   Mobile Responsive (v2.18)
+   手机/窄屏响应式布局（三端共用段落）：
+   - .player-main 直子元素收敛为 cover-wrapper + player-main-right 两兄弟
+   - ≤1023px 左侧 .playlist-panel 变为抽屉（滑出 + 半透明遮罩）
+   - 641~1023px 窄横屏双栏：左 1/3 封面 / 右 2/3 控件列（右列内部可滚）
+   - ≤640px 竖屏单列堆叠 + 顶栏图标化（文字隐藏）
+   注意：本段追加于文件末尾，顺序在后即覆盖前文同名规则。
+   ============================ */
+
+/* 右控制列容器：默认（≥1024px 桌面）观感与改造前完全一致，
+   只是把六个平级块收进容器分组（main 的 gap 落到 封面↔右列 之间、
+   容器内各块间各 20px，总和与原先相等） */
+.player-main-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 顶栏抽屉按钮：默认隐藏（桌面 ≥1024px 不出现），≤1023px 由断点展示 */
+.btn-drawer {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.28);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25), inset 0 1px 1px rgba(255,255,255,0.45);
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.btn-drawer:hover {
+  background: rgba(255,255,255,0.18);
+  border-color: rgba(255,255,255,0.5);
+  transform: translateY(-1px);
+}
+.btn-drawer:active { transform: scale(0.95); }
+.btn-drawer svg { display: block; }
+
+/* 抽屉遮罩：默认隐形且不拦截点击；仅 .app.drawer-open 且 ≤1023px 时淡入可见 */
+#drawer-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(8,6,20,0.5);
+  z-index: 80;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+/* 顶栏实测高度变量：抽屉/面板 top 与其对齐（641px 及以上 69px，≤640px 见下） */
+.app { --titlebar-h: 69px; }
+
+/* ---------------- 断点一：≤1023px 播放列表面板变左侧抽屉 ---------------- */
+@media (max-width: 1023px) {
+  .btn-drawer { display: inline-flex; }
+  .titlebar .btn-drawer { margin-right: 10px; }
+  /* 时钟被隐藏后顶栏只剩三个弹性项，space-between 会把 logo 推到中间；
+     让 logo 吃掉剩余空间，令「≡ + 🎵」贴左、图标组靠右 */
+  .titlebar .logo { margin-right: auto; }
+
+  /* 641~1023px 顶栏也图标化：隐藏按钮文字 / logo 文字 / 时钟。
+     实测若保留文本按钮会被挤换行使顶栏长高到 81px+，抽屉 top 会对不齐 */
+  #logo-text { display: none !important; }
+  #header-clock { display: none; }
+  .header-actions { gap: 8px; }
+  .header-actions button {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .header-actions .lbl { display: none; }
+
+  .playlist-panel {
+    position: fixed;
+    left: 0;
+    top: var(--titlebar-h);
+    bottom: 0;
+    width: min(84vw, 300px);
+    z-index: 90;
+    transform: translateX(-105%);
+    transition: transform 0.28s ease;
+    border-right: none;
+    border-radius: 0 14px 14px 0;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.45);
+  }
+
+  .app.drawer-open .playlist-panel { transform: translateX(0); }
+  .app.drawer-open #drawer-mask { opacity: 1; pointer-events: auto; }
+
+  .player-main { padding: 24px 22px; }
+  .cover { width: 170px; height: 170px; }
+}
+
+/* ---------------- 断点二：641~1023px 窄横屏双栏 ---------------- */
+@media (min-width: 641px) and (max-width: 1023px) {
+  .player-main {
+    flex-direction: row;
+    align-items: stretch;
+    gap: clamp(14px, 3vw, 30px);
+    overflow: hidden;
+  }
+  .cover-wrapper {
+    flex: 1 1 33.33%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+  }
+  .player-main-right {
+    flex: 2 1 66.67%;
+    height: 100%;
+    overflow-y: auto;
+    justify-content: flex-start;
+    padding: 2px 4px;
+  }
+  .cover { width: clamp(96px, 30vh, 170px); height: clamp(96px, 30vh, 170px); }
+  .format-hint {
+    font-size: 0.66rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    opacity: 0.75;
+  }
+}
+
+/* ---------------- 断点三：≤640px 竖屏单列（顶栏图标化 + 主区堆叠居中） ---------------- */
+@media (max-width: 640px) {
+  .app { --titlebar-h: 61px; }
+  .titlebar { padding: 10px 14px; }
+  .btn-drawer { width: 40px; height: 40px; }
+
+  /* 顶栏窄屏只显示图标：logo 文字 / 时钟 / 按钮文字隐藏 */
+  #logo-text { display: none !important; }
+  #header-clock { display: none; }
+  .header-actions { gap: 8px; }
+  .header-actions button {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .header-actions .lbl { display: none; }
+
+  .player-main { padding: 22px 16px; justify-content: safe center; }
+  .cover { width: 160px; height: 160px; }
+  .format-hint {
+    font-size: 0.6rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    opacity: 0.8;
+  }
+}
