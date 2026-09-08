@@ -82,10 +82,10 @@
           <!-- 中间行右侧：破折号 + 播放按钮 → 点击弹出扁椭圆气泡「从此句播放」 -->
           <button id="lyric-jump" class="lyric-jump" title="从此句开始播放" aria-label="从此句开始播放">
             <span class="lyric-jump-dash">—</span>
-            <svg class="lyric-jump-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><polygon points="6,3 20,12 6,21"/></svg>
+            <svg class="lyric-jump-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><polygon points="18,3 4,12 18,21"/></svg>
           </button>
           <div id="lyric-jump-pop" class="lyric-jump-pop hidden">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="6,3 20,12 6,21"/></svg>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="18,3 4,12 18,21"/></svg>
             <span>从此句播放</span>
           </div>
         </div>
@@ -312,6 +312,31 @@
     </div>
   </div>
 
+  <!-- 首开页3：设备形态 -->
+  <div id="device-overlay" class="device-overlay hidden">
+    <div class="device-box">
+      <h1 class="device-title">请选择设备形态</h1>
+      <p class="device-sub">同一套界面，两套适配：平板竖屏显示标题与时间、内容居中；手机横屏显示标题与时间，竖屏只显示标题。可在「设置」里随时更改。</p>
+      <div class="device-options">
+        <label class="device-option" data-dev="phone">
+          <input type="radio" name="dev" value="phone" />
+          <span class="device-opt-emoji">📱</span>
+          <span class="device-opt-title">手机</span>
+          <span class="device-opt-desc">竖屏：仅标题 · 横屏：标题＋时间</span>
+        </label>
+        <label class="device-option" data-dev="tablet">
+          <input type="radio" name="dev" value="tablet" />
+          <span class="device-opt-emoji">🖥️</span>
+          <span class="device-opt-title">平板</span>
+          <span class="device-opt-desc">竖屏/横屏：均显示标题＋时间，内容居中</span>
+        </label>
+      </div>
+      <div class="device-footer">
+        <button id="btn-dev-confirm" class="dev-btn confirm">确认</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== 设置面板 Modal ===================== -->
   <div id="settings-overlay" class="settings-overlay hidden">
     <div class="settings-modal glass">
@@ -321,6 +346,21 @@
       </div>
 
       <div class="settings-body">
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">设备形态 (Device)</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-row-label">当前设备</span>
+            <div class="dev-seg" id="set-device-seg">
+              <button type="button" data-devtype="auto" class="dev-seg-btn">自动</button>
+              <button type="button" data-devtype="phone" class="dev-seg-btn">手机</button>
+              <button type="button" data-devtype="tablet" class="dev-seg-btn">平板</button>
+            </div>
+          </div>
+          <div class="settings-hint">「自动」按屏幕尺寸判定；选「平板」则竖屏也显示标题＋时间且内容居中；选「手机」则竖屏不显示时钟。桌面端不受影响。</div>
+        </div>
+
         <!-- 模糊 -->
         <div class="settings-group glass">
           <div class="settings-group-head">
@@ -462,7 +502,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.18.0</span>
+        <span class="settings-version">v2.19.1</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

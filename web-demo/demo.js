@@ -40,7 +40,69 @@
   $("#btn-df-confirm").addEventListener("click", () => {
     hideOverlay("#datafolder-overlay");
     toast("已进入体验界面（演示，无真实写入）");
+    maybeShowDeviceStep(); // 首启第三步：设备形态选择（仅触屏弹）
   });
+
+  /* ---------- 设备形态选择（v2.19）：手机/平板布局适配 ----------
+     仅触屏(coarse)弹首启第三步；桌面(fine)按新机制解析布局（set <html data-layout>）。
+     与 www/player.js 同逻辑，demo 用 localStorage 自管 deviceType（无 settings 框架）。 */
+  let deviceType = localStorage.getItem("mp_deviceType") || "auto";
+  function resolveDeviceLayout() {
+    const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    let layout = "";
+    if (coarse) {
+      layout = (deviceType === "phone" || deviceType === "tablet")
+        ? deviceType
+        : (Math.min(window.innerWidth, window.innerHeight) >= 600 ? "tablet" : "phone");
+    }
+    const root = document.documentElement;
+    if (layout) root.setAttribute("data-layout", layout);
+    else root.removeAttribute("data-layout");
+    return layout;
+  }
+  function applyDeviceLayout() { resolveDeviceLayout(); if (typeof lyricRefreshGeometry === "function") lyricRefreshGeometry(); }
+  function maybeShowDeviceStep() {
+    const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    if (!coarse) { applyDeviceLayout(); return; }
+    const ov = $("#device-overlay");
+    if (!ov) { applyDeviceLayout(); return; }
+    const detected = Math.min(window.innerWidth, window.innerHeight) >= 600 ? "tablet" : "phone";
+    const preset = (deviceType === "phone" || deviceType === "tablet") ? deviceType : detected;
+    $$('input[name="dev"]').forEach((r) => { r.checked = (r.value === preset); });
+    ov.classList.remove("hidden");
+    const onConfirm = () => {
+      const sel = document.querySelector('input[name="dev"]:checked');
+      deviceType = sel ? sel.value : detected;
+      try { localStorage.setItem("mp_deviceType", deviceType); } catch (_) {}
+      applyDeviceLayout();
+      ov.classList.add("hidden");
+      const b = $("#btn-dev-confirm");
+      if (b) b.removeEventListener("click", onConfirm);
+    };
+    const b = $("#btn-dev-confirm");
+    if (b) b.addEventListener("click", onConfirm);
+  }
+  // 设置面板「设备形态」分段
+  const devSeg = $("#set-device-seg");
+  if (devSeg) {
+    const refreshDevSeg = () => {
+      $$(".dev-seg-btn", devSeg).forEach((b) => {
+        b.classList.toggle("active", b.dataset.devtype === deviceType);
+      });
+    };
+    $$(".dev-seg-btn", devSeg).forEach((b) => {
+      b.addEventListener("click", () => {
+        deviceType = b.dataset.devtype || "auto";
+        try { localStorage.setItem("mp_deviceType", deviceType); } catch (_) {}
+        applyDeviceLayout(); refreshDevSeg();
+      });
+    });
+    refreshDevSeg();
+  }
+  // 旋转 / 尺寸 / 触屏状态变化
+  window.addEventListener("resize", () => { if (deviceType === "auto") resolveDeviceLayout(); });
+  window.addEventListener("orientationchange", () => { resolveDeviceLayout(); });
+  try { if (window.matchMedia) window.matchMedia("(pointer: coarse)").addEventListener("change", () => { resolveDeviceLayout(); }); } catch (_) {}
 
   /* ---------- 顶栏时钟 ---------- */
   function tick() {
@@ -169,6 +231,7 @@
   let lyrVisA = -1, lyrVisB = -1;
   let lyrTransient = false;   // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
   let lyrTransientTimer = null;
+  let lyrBrowseIdx = -1;  // 浏览态吸附/落点句（跳句以此为准）
   let lyricFontSize = 15;     // mock 字号（设置输入框同步，几何用）
   const LYR_AUTO_RETURN_MS = 5000;
   const LYR_RETURN_MS = 380;
@@ -196,6 +259,18 @@
     const max = lyrViewH / 2 - (0 + lyrRowHeight(0) / 2);
     const min = lyrViewH / 2 - (lyrTop(n - 1) + lyrRowHeight(n - 1) / 2);
     return Math.max(Math.min(max, o), min);
+  }
+  // 由当前 offset 反推「视口中心正在显示的第 i 行」（无歌词返回 -1）
+  function lyrLineAtCenter() {
+    if (!lyrItems || !lyrItems.length || lyrViewH <= 0) return -1;
+    const half = lyrViewH / 2;
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < lyrItems.length; i++) {
+      const c = lyrTop(i) + lyrRowHeight(i) / 2 + lyrOffset;
+      const d = Math.abs(c - half);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
   }
 
   // ---- 建列表 / active 切换 / 布局 ----
@@ -313,6 +388,37 @@
   function lyrCancelAnim() {
     if (lyrAnim) { cancelAnimationFrame(lyrAnim); lyrAnim = null; }
   }
+  // 浏览态吸附：把视口中心行吸附到中线（偏移微调到恰好居中），返回该行下标
+  function lyrSnapBrowseToCenter() {
+    if (!lyrItems || !lyrItems.length || lyrViewH <= 0) return -1;
+    const idx = lyrLineAtCenter();
+    if (idx < 0) return -1;
+    lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+    lyrLayout();
+    return idx;
+  }
+  // 平滑移动 offset 到 to（用于吸附动画；结束时恢复 transient 并刷新跳句按钮）
+  function lyrAnimOffsetTo(to, ms) {
+    lyrCancelAnim();
+    const from = lyrOffset;
+    if (Math.abs(to - from) < 1) {
+      lyrOffset = to; lyrLayout(); lyrTransient = false; lyrUpdateJumpUi(); return;
+    }
+    lyrTransient = true;
+    const t0 = performance.now();
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / (ms || 140));
+      const ease = 1 - Math.pow(1 - p, 3);
+      lyrOffset = lyrClampOffset(from + (to - from) * ease);
+      lyrLayout();
+      if (p < 1 && lyrFollowing === false && !lyrPointerDrag) {
+        lyrAnim = requestAnimationFrame(step);
+      } else {
+        lyrAnim = null; lyrTransient = false; lyrLayout(); lyrUpdateJumpUi();
+      }
+    };
+    lyrAnim = requestAnimationFrame(step);
+  }
   function lyrScheduleAutoReturn() {
     lyrCancelAutoReturn();
     lyrReturnTimer = setTimeout(lyrFireAutoReturn, LYR_AUTO_RETURN_MS);
@@ -320,6 +426,7 @@
   function lyrEnterBrowse() {
     if (!lyrItems || !lyrItems.length) return;
     lyrFollowing = false;
+    lyrBrowseIdx = -1;  // 进入浏览即重置落点句
     lyrCancelAutoReturn();
     lyrCancelAnim();
     lyrHideJumpUi();
@@ -391,9 +498,21 @@
     if (!d.moved) {
       lyrFollowing = true;
       lyrTransient = false;
+      lyrUpdateJumpUi();
       return;
     }
     lyrScheduleAutoReturn();
+    // 松手吸附：把离中线最近的一句滚到正中间（跟随态行高不展开，几何稳定）
+    if (!lyrPointerDrag) {
+      const idx = lyrSnapBrowseToCenter();
+      lyrBrowseIdx = idx;
+      lyrOffset = lyrClampOffset(lyrCenterOffset(idx)); // 立即居中（无动画，避免与跟手偏移叠加）
+      lyrLayout();
+    }
+    // 拖拽结束立即复位 transient（拖拽全程恒为 true；不复位则「从此句播放」按钮被 busy 判定一直隐藏）
+    if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
+    lyrTransient = false;
+    lyrUpdateJumpUi();
   }
   function lyrOnWheel(e) {
     if (!lyricEnabled || !lyricSection || lyricSection.classList.contains("hidden")) return;
@@ -410,7 +529,12 @@
     lyrLayout();
     lyrTransient = true;
     if (lyrTransientTimer) clearTimeout(lyrTransientTimer);
-    lyrTransientTimer = setTimeout(() => { lyrTransientTimer = null; lyrTransient = false; }, 90);
+    lyrTransientTimer = setTimeout(() => {
+      lyrTransientTimer = null; lyrTransient = false;
+      const idx = lyrSnapBrowseToCenter();
+      if (idx >= 0) lyrBrowseIdx = idx;
+      lyrUpdateJumpUi();
+    }, 90);
     lyrCancelAutoReturn();
     lyrScheduleAutoReturn();
     e.preventDefault();
@@ -426,7 +550,9 @@
       lyrHideJumpUi();
       return;
     }
-    const visible = !!(lyrItems && lyrItems.length > 0 && lyrActive >= 0 && lyrFollowing);
+    const busy = !!lyrPointerDrag || lyrTransient;
+    const hasLine = lyrFollowing ? (lyrActive >= 0) : (lyrLineAtCenter() >= 0);
+    const visible = !!(lyrItems && lyrItems.length > 0 && !busy && hasLine);
     if (lyricJumpBtn) lyricJumpBtn.classList.toggle("visible", visible);
     if (!visible && lyricJumpPop) { lyricJumpPop.classList.add("hidden"); lyrPopOpen = false; }
   }
@@ -436,21 +562,36 @@
     if (lyrPopOpen) {
       lyrPopOpen = false;
       lyricJumpPop.classList.add("hidden");
+      if (!lyrFollowing) lyrScheduleAutoReturn(); // 关闭气泡后恢复 5s 自动回位
     } else {
       lyrPopOpen = true;
       lyricJumpPop.classList.remove("hidden");
+      lyrCancelAutoReturn(); // 气泡开着不自动回位，避免“看着中心句却跳回播放句”的竞态
     }
   }
   function lyrOnJumpPopClick() {
     if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
     lyrPopOpen = false;
     const lrc = lyrLrc;
-    if (!lrc || !lrc.length || lyrActive < 0 || lyrActive >= lrc.length) return;
+    if (!lrc || !lrc.length) return;
+    // 跟随态 → 播放句；浏览态 → 落点句（吸附后的视口中心句，优先于实时重算，防自动回位竞态）
+    let idx = lyrFollowing ? lyrActive : (lyrBrowseIdx >= 0 ? lyrBrowseIdx : lyrLineAtCenter());
+    if (idx < 0 || idx >= lrc.length) idx = lyrFollowing ? lyrActive : lyrLineAtCenter();
+    if (idx < 0 || idx >= lrc.length) return;
     // demo 无真实音频：seek 语义 = 把 curTime 定位到该句起点，并保持/进入"播放中"假象
-    const target = lrc[lyrActive].time;
+    const target = lrc[idx].time;
     if (curTime !== target) { curTime = target; updateProgress(); }
     if (!isPlaying) setPlaying(true);
-    if (!lyrFollowing) lyrFollowing = true;
+    if (!lyrFollowing) {
+      // 从浏览态跳播：恢复跟随并把该句归中
+      lyrFollowing = true;
+      lyrCancelAutoReturn();
+      lyrSetActiveTo(idx, true);
+      lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+      lyrTransient = false;
+      lyrLayout();
+    }
+    lyrUpdateJumpUi();
     syncLyrics();
   }
 
@@ -472,6 +613,7 @@
     if (t && t.closest && (t.closest("#lyric-jump-pop") || t.closest("#lyric-jump"))) return;
     lyrPopOpen = false;
     if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
+    if (!lyrFollowing) lyrScheduleAutoReturn(); // 点击别处关闭气泡：浏览态恢复自动回位
   });
 
   // 隐藏歌词区并清空引擎状态（开关关闭 / 无歌词时）
@@ -480,6 +622,7 @@
     lyrCancelAnim();
     lyrPointerDrag = null;
     lyrPopOpen = false;
+    lyrBrowseIdx = -1;
     if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
     lyrTransient = false;
     if (lyricList) lyricList.innerHTML = "";
@@ -1049,6 +1192,8 @@
     });
     requestAnimationFrame(drawEQ);
   }
+  // 老用户进入体验版：立即按新机制解析设备形态布局（仅触屏生效）
+  applyDeviceLayout();
 })();
 
 /* ---------- Mobile drawer (v2.18)：复刻 www/player.js 抽屉开关 ----------

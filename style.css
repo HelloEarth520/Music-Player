@@ -2056,7 +2056,7 @@ html, body {
 .app { --titlebar-h: 69px; }
 
 /* ---------------- 断点一：≤1023px 播放列表面板变左侧抽屉 ---------------- */
-@media (max-width: 1023px) {
+@media (max-width: 1023px), (pointer: coarse) {
   .btn-drawer { display: inline-flex; }
   .titlebar .btn-drawer { margin-right: 10px; }
   /* 时钟被隐藏后顶栏只剩三个弹性项，space-between 会把 logo 推到中间；
@@ -2164,4 +2164,254 @@ html, body {
     max-width: 100%;
     opacity: 0.8;
   }
+}
+
+/* ============================
+   Mobile Responsive (v2.18.1)：方向细分（仅触屏设备生效）
+   - 触屏横屏 641~1023：顶栏恢复「应用名 + 时钟」，按钮保持图标化防挤；
+     歌词可视行收窄、间距收紧，歌名/进度/控制尽量一屏完整。
+   - 触屏竖屏 641~1023（平板竖屏）：主区回到单列堆叠居中（与手机竖屏一致），
+     覆盖上面断点二的横排双栏。
+   仅 pointer:coarse（Android/平板/手机等触屏设备）命中；
+   桌面窗口与 C-panel 为 fine pointer，保持 v2.18 行为不变。
+   ============================ */
+@media (orientation: landscape) and (pointer: coarse) and (min-width: 641px) and (max-width: 1023px) {
+  .app { --titlebar-h: 61px; }
+  .titlebar { padding: 10px 14px; }
+  #logo-text {
+    display: inline !important;
+    max-width: min(30vw, 200px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 1rem;
+  }
+  #header-clock { display: inline; font-size: 0.92rem; margin: 0 10px; }
+  .titlebar .logo { margin-right: 0; }
+
+  .player-main { padding: 12px 16px; gap: 12px; }
+  .player-main-right { gap: 12px; }
+  .lyric-section {
+    height: calc(var(--lyric-size, 15px) * 1.45 * 4.4);
+    min-height: 0;
+  }
+  .cover { width: clamp(96px, 26vh, 150px); height: clamp(96px, 26vh, 150px); }
+  .format-hint { display: none; }
+}
+
+@media (orientation: portrait) and (pointer: coarse) and (min-width: 641px) and (max-width: 1023px) {
+  .player-main {
+    flex-direction: column;
+    justify-content: safe center;
+    overflow-y: auto;
+    padding: 22px 20px;
+  }
+  .cover-wrapper {
+    flex: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .player-main-right {
+    flex: none;
+    width: 100%;
+    max-width: 560px;
+    height: auto;
+    overflow: visible;
+    justify-content: safe center;
+  }
+  .cover { width: clamp(140px, 30vh, 190px); height: clamp(140px, 30vh, 190px); }
+}
+
+/* ============================
+   首开页3：设备形态选择 overlay（视觉对齐 datafolder-overlay）
+   ============================ */
+.device-overlay {
+  position: fixed; inset: 0; z-index: 9200;
+  background: rgba(0,0,0,0.92);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.device-overlay.hidden { display: none; }
+.device-box {
+  width: min(560px, 96%);
+  background: rgba(20,16,40,0.96);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  padding: 26px 28px;
+  display: flex; flex-direction: column; gap: 16px;
+  box-shadow: 0 20px 80px rgba(0,0,0,0.6);
+}
+.device-title {
+  font-size: 1.15rem; font-weight: 700;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.device-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: -6px; line-height: 1.5; }
+.device-options { display: flex; flex-direction: column; gap: 12px; }
+.device-option {
+  display: flex; flex-direction: row; align-items: center; gap: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--card-border);
+  border-radius: 14px; padding: 16px 18px; cursor: pointer;
+  transition: var(--transition);
+}
+.device-option:hover { background: rgba(167,139,250,0.1); border-color: var(--accent); }
+.device-option input { display: none; }
+.device-option:has(input:checked) { border-color: var(--accent); background: rgba(167,139,250,0.16); }
+.device-opt-emoji { font-size: 1.8rem; line-height: 1; }
+.device-opt-title { font-size: 1rem; font-weight: 600; color: var(--text); }
+.device-opt-desc { font-size: 0.74rem; color: var(--text-muted); }
+.device-footer { display: flex; justify-content: flex-end; }
+.dev-btn {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff; border: none; padding: 9px 24px;
+  border-radius: 50px; cursor: pointer; font-size: 0.88rem; font-weight: 600;
+  transition: var(--transition);
+}
+.dev-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+/* 设置面板「设备形态」分段控件 */
+.dev-seg {
+  display: inline-flex; gap: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--card-border);
+  border-radius: 50px; padding: 3px;
+}
+.dev-seg-btn {
+  border: none; background: transparent; color: var(--text-muted);
+  padding: 6px 14px; border-radius: 50px; cursor: pointer; font-size: 0.82rem;
+  transition: var(--transition);
+}
+.dev-seg-btn.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+}
+
+/* ============================
+   Mobile Responsive (v2.19)：设备形态（手机/平板）细分
+   由 JS 依据「设备形态」设置把 data-layout 写到 <html>；仅触屏(coarse)命中。
+   - data-layout="phone"  竖屏只显示标题(隐藏时钟)，横屏标题+时钟
+   - data-layout="tablet" 竖屏/横屏都显示标题+时钟，竖屏内容居中
+   桌面(fine pointer)不设 data-layout → 走断点一/二/三宽度规则，行为与 v2.18 一致
+   ============================ */
+html[data-layout="phone"], html[data-layout="tablet"] { --titlebar-h: 61px; }
+html[data-layout="tablet"] { --titlebar-h: 64px; }
+
+/* 触屏通用：按钮图标化 / logo·时间省略防溢出（断点一已扩为 coarse，这里兜底） */
+@media (pointer: coarse) {
+  html[data-layout="phone"] .header-actions .lbl,
+  html[data-layout="tablet"] .header-actions .lbl { display: none; }
+  html[data-layout="phone"] .titlebar .logo,
+  html[data-layout="tablet"] .titlebar .logo { margin-right: auto; }
+  html[data-layout="phone"] #logo-text,
+  html[data-layout="tablet"] #logo-text,
+  html[data-layout="phone"] #header-clock,
+  html[data-layout="tablet"] #header-clock {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+}
+
+/* ===== 手机 phone：竖屏（任意宽度）→ 仅标题、内容单列居中 ===== */
+@media (orientation: portrait) and (pointer: coarse) {
+  html[data-layout="phone"] #logo-text {
+    display: inline !important;
+    max-width: min(34vw, 160px);
+    font-size: 0.95rem;
+  }
+  html[data-layout="phone"] #header-clock { display: none !important; }
+  html[data-layout="phone"] .player-main {
+    flex-direction: column;
+    justify-content: safe center;
+    align-items: center;
+    overflow-y: auto;
+    padding: 18px 16px;
+  }
+  html[data-layout="phone"] .cover-wrapper { width: 100%; display: flex; justify-content: center; }
+  html[data-layout="phone"] .player-main-right {
+    width: 100%; max-width: 480px;
+    align-items: center; justify-content: safe center; text-align: center;
+  }
+  html[data-layout="phone"] .cover { width: clamp(120px, 26vh, 170px); height: clamp(120px, 26vh, 170px); }
+}
+
+/* ===== 手机 phone：横屏 → 标题+时间，行式双栏 ===== */
+@media (orientation: landscape) and (pointer: coarse) {
+  html[data-layout="phone"] #logo-text { display: inline !important; }
+  html[data-layout="phone"] #header-clock { display: inline !important; font-size: 0.92rem; margin: 0 10px; }
+  html[data-layout="phone"] .player-main {
+    flex-direction: row; align-items: stretch; gap: clamp(12px, 3vw, 24px); overflow: hidden;
+  }
+  html[data-layout="phone"] .cover-wrapper { flex: 1 1 33%; display: flex; align-items: center; justify-content: center; min-width: 0; }
+  html[data-layout="phone"] .player-main-right { flex: 2 1 66%; height: 100%; overflow-y: auto; justify-content: flex-start; }
+  html[data-layout="phone"] .format-hint { display: none; }
+  html[data-layout="phone"] .lyric-section { height: calc(var(--lyric-size, 15px) * 1.45 * 4.4); min-height: 0; }
+  html[data-layout="phone"] .cover { width: clamp(110px, 30vh, 160px); height: clamp(110px, 30vh, 160px); }
+}
+
+/* ===== 平板 tablet：竖屏（任意宽度，含 >1023）→ 标题+时间，整列居中 ===== */
+@media (orientation: portrait) and (pointer: coarse) {
+  html[data-layout="tablet"] #logo-text { display: inline !important; }
+  html[data-layout="tablet"] #header-clock { display: inline !important; }
+  html[data-layout="tablet"] .player-main {
+    flex-direction: column; justify-content: safe center; align-items: center;
+    overflow-y: auto; padding: 22px 20px;
+  }
+  html[data-layout="tablet"] .cover-wrapper { width: 100%; display: flex; justify-content: center; }
+  html[data-layout="tablet"] .player-main-right {
+    width: 100%; max-width: 560px; align-items: center; justify-content: safe center; text-align: center;
+  }
+  html[data-layout="tablet"] .cover { width: clamp(140px, 30vh, 200px); height: clamp(140px, 30vh, 200px); }
+}
+
+/* ===== 平板 tablet：横屏 → 标题+时间，行式双栏更宽松（6 行歌词） ===== */
+@media (orientation: landscape) and (pointer: coarse) {
+  html[data-layout="tablet"] #logo-text { display: inline !important; }
+  html[data-layout="tablet"] #header-clock { display: inline !important; }
+  html[data-layout="tablet"] .player-main {
+    flex-direction: row; align-items: stretch; gap: clamp(12px, 3vw, 28px); overflow: hidden;
+  }
+  html[data-layout="tablet"] .cover-wrapper { flex: 1 1 33%; display: flex; align-items: center; justify-content: center; min-width: 0; }
+  html[data-layout="tablet"] .player-main-right { flex: 2 1 66%; }
+  html[data-layout="tablet"] .cover { width: clamp(120px, 32vh, 210px); height: clamp(120px, 32vh, 210px); }
+  html[data-layout="tablet"] .lyric-section { height: calc(var(--lyric-size, 15px) * 1.45 * 6); min-height: 0; }
+}
+
+/* ============================
+   Mobile Responsive (v2.19.1)：平板横屏桌面化
+   - 平板横屏：空间足够 → 左侧播放列表常驻(不折叠成抽屉)、右上功能按钮
+     恢复文字标签(不图标化)、标题+时钟常显。
+   - 手机（横/竖）与平板竖屏维持折叠行为不变（由 v2.19 段控制）。
+   仅命中 html[data-layout="tablet"] + 横屏 + 触屏；桌面(fine pointer)本就不折叠。
+   ============================ */
+@media (orientation: landscape) and (pointer: coarse) {
+  html[data-layout="tablet"] .btn-drawer { display: none; }
+
+  /* 左栏：从抽屉还原为静态常驻栏（基样式 280px） */
+  html[data-layout="tablet"] .playlist-panel {
+    position: static;
+    left: auto; top: auto; bottom: auto;
+    width: 280px;
+    transform: none;
+    transition: none;
+    border-right: 1px solid var(--card-border);
+    border-radius: 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  html[data-layout="tablet"] .app.drawer-open .playlist-panel { transform: none; }
+  html[data-layout="tablet"] .app.drawer-open #drawer-mask { opacity: 0; pointer-events: none; }
+
+  /* 顶栏：logo 不抢位（时钟 flex:1 居中），按钮还原为带文字的胶囊按钮 */
+  html[data-layout="tablet"] .titlebar { padding: 14px 28px; }
+  html[data-layout="tablet"] .titlebar .logo { margin-right: 0; }
+  html[data-layout="tablet"] .header-actions { gap: 10px; }
+  html[data-layout="tablet"] .header-actions button {
+    width: auto; height: auto;
+    padding: 7px 18px;
+    border-radius: 50px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+  }
+  html[data-layout="tablet"] .header-actions .lbl { display: inline; }
 }

@@ -1009,6 +1009,7 @@ let lyrPopOpen = false;   // 「从此句播放」气泡是否展开
 let lyrVisA = -1, lyrVisB = -1;  // 上次可视行区间（[首, 尾]），用于清理离窗行
 let lyrTransient = false; // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
 let lyrTransientTimer = null;
+let lyrBrowseIdx = -1;  // 浏览态吸附/落点句（跳句以此为准）
 const LYR_AUTO_RETURN_MS = 5000; // 浏览停止后自动回位延时
 const LYR_RETURN_MS = 380;       // 回位平滑动画时长
 
@@ -1043,6 +1044,19 @@ function lyrClampOffset(o) {
   const max = lyrViewH / 2 - (0 + lyrRowHeight(0) / 2);
   const min = lyrViewH / 2 - (lyrTop(n - 1) + lyrRowHeight(n - 1) / 2);
   return Math.max(Math.min(max, o), min);
+}
+
+/** 由当前 offset 反推「视口中心正在显示的第 i 行」（无歌词返回 -1） */
+function lyrLineAtCenter() {
+  if (!lyrItems || !lyrItems.length || lyrViewH <= 0) return -1;
+  const half = lyrViewH / 2;
+  let best = -1, bestD = Infinity;
+  for (let i = 0; i < lyrItems.length; i++) {
+    const c = lyrTop(i) + lyrRowHeight(i) / 2 + lyrOffset;
+    const d = Math.abs(c - half);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
 }
 
 /** 由 lrc 时间轴 + 播放时刻求当前句下标 */
@@ -1190,6 +1204,37 @@ function lyrCancelAutoReturn() {
 function lyrCancelAnim() {
   if (lyrAnim) { cancelAnimationFrame(lyrAnim); lyrAnim = null; }
 }
+// 浏览态吸附：把视口中心行吸附到中线（偏移微调到恰好居中），返回该行下标
+function lyrSnapBrowseToCenter() {
+  if (!lyrItems || !lyrItems.length || lyrViewH <= 0) return -1;
+  const idx = lyrLineAtCenter();
+  if (idx < 0) return -1;
+  lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+  lyrLayout();
+  return idx;
+}
+// 平滑移动 offset 到 to（用于吸附动画；结束时恢复 transient 并刷新跳句按钮）
+function lyrAnimOffsetTo(to, ms) {
+  lyrCancelAnim();
+  const from = lyrOffset;
+  if (Math.abs(to - from) < 1) {
+    lyrOffset = to; lyrLayout(); lyrTransient = false; lyrUpdateJumpUi(); return;
+  }
+  lyrTransient = true;
+  const t0 = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / (ms || 140));
+    const ease = 1 - Math.pow(1 - p, 3);
+    lyrOffset = lyrClampOffset(from + (to - from) * ease);
+    lyrLayout();
+    if (p < 1 && lyrFollowing === false && !lyrPointerDrag) { // 用户再次拖动/已回位则中断
+      lyrAnim = requestAnimationFrame(step);
+    } else {
+      lyrAnim = null; lyrTransient = false; lyrLayout(); lyrUpdateJumpUi();
+    }
+  };
+  lyrAnim = requestAnimationFrame(step);
+}
 function lyrScheduleAutoReturn() {
   lyrCancelAutoReturn();
   lyrReturnTimer = setTimeout(lyrFireAutoReturn, LYR_AUTO_RETURN_MS);
@@ -1199,6 +1244,7 @@ function lyrScheduleAutoReturn() {
 function lyrEnterBrowse() {
   if (!lyrItems || !lyrItems.length) return;
   lyrFollowing = false;
+  lyrBrowseIdx = -1;  // 进入浏览即重置落点句
   lyrCancelAutoReturn();
   lyrCancelAnim();
   lyrHideJumpUi();
@@ -1278,9 +1324,21 @@ function lyrEndPointer(e) {
   if (!d.moved) {          // 仅点击未拖动：不进入浏览，维持跟随
     lyrFollowing = true;
     lyrTransient = false;
+    lyrUpdateJumpUi();
     return;
   }
   lyrScheduleAutoReturn();
+  // 松手吸附：把离中线最近的一句滚到正中间（跟随态行高不展开，几何稳定）
+  if (!lyrPointerDrag) {
+    const idx = lyrSnapBrowseToCenter();
+    lyrBrowseIdx = idx;
+    lyrOffset = lyrClampOffset(lyrCenterOffset(idx)); // 立即居中（无动画，避免与跟手偏移叠加）
+    lyrLayout();
+  }
+  // 拖拽结束立即复位 transient（拖拽全程恒为 true；不复位则「从此句播放」按钮被 busy 判定一直隐藏）
+  if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
+  lyrTransient = false;
+  lyrUpdateJumpUi(); // 静止即显示中心句按钮
 }
 function lyrOnWheel(e) {
   if (!lyricSection || lyricSection.classList.contains('hidden')) return;
@@ -1297,7 +1355,12 @@ function lyrOnWheel(e) {
   lyrLayout();
   lyrTransient = true;
   if (lyrTransientTimer) clearTimeout(lyrTransientTimer);
-  lyrTransientTimer = setTimeout(() => { lyrTransientTimer = null; lyrTransient = false; }, 90);
+  lyrTransientTimer = setTimeout(() => {
+    lyrTransientTimer = null; lyrTransient = false;
+    const idx = lyrSnapBrowseToCenter();
+    if (idx >= 0) lyrBrowseIdx = idx;
+    lyrUpdateJumpUi();
+  }, 90);
   lyrCancelAutoReturn();
   lyrScheduleAutoReturn();
   e.preventDefault();
@@ -1309,13 +1372,18 @@ function lyrHideJumpUi() {
   if (lyricJumpBtn) lyricJumpBtn.classList.remove('visible');
   if (lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
 }
-/** 更新 jump 按钮可见性：歌词区可见 + 有行 + 有当前句 + 处于跟随态 */
+/** 更新 jump 按钮可见性：歌词区可见且有行。
+ *  跟随态：按钮在播放句（视口中心）上 → 点击从该句播放；
+ *  浏览态（用户滑动后静止）：按钮仍显示，对应「视口中心的歌词行」→ 从看的那句播放。
+ *  拖拽/回位动画进行中隐藏，防误触。 */
 function lyrUpdateJumpUi() {
   if (!lyricSection || lyricSection.classList.contains('hidden')) {
     lyrHideJumpUi();
     return;
   }
-  const visible = !!(lyrItems && lyrItems.length > 0 && lyrActive >= 0 && lyrFollowing);
+  const busy = !!lyrPointerDrag || lyrTransient;
+  const hasLine = lyrFollowing ? (lyrActive >= 0) : (lyrLineAtCenter() >= 0);
+  const visible = !!(lyrItems && lyrItems.length > 0 && !busy && hasLine);
   if (lyricJumpBtn) lyricJumpBtn.classList.toggle('visible', visible);
   if (!visible && lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
 }
@@ -1325,22 +1393,37 @@ function lyrOnJumpBtnClick(e) {
   if (lyrPopOpen) {
     lyrPopOpen = false;
     lyricJumpPop.classList.add('hidden');
+    if (!lyrFollowing) lyrScheduleAutoReturn(); // 关闭气泡后恢复 5s 自动回位
   } else {
     lyrPopOpen = true;
     lyricJumpPop.classList.remove('hidden');
+    lyrCancelAutoReturn(); // 气泡开着不自动回位，避免“看着中心句却跳回播放句”的竞态
   }
 }
 function lyrOnJumpPopClick() {
   if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
   lyrPopOpen = false;
   const lrc = lyrLrc;
-  if (!lrc || !lrc.length || lyrActive < 0 || lyrActive >= lrc.length) return;
-  const line = lrc[lyrActive];
+  if (!lrc || !lrc.length) return;
+  // 跟随态 → 播放句；浏览态 → 落点句（吸附后的视口中心句，优先于实时重算，防自动回位竞态）
+  let idx = lyrFollowing ? lyrActive : (lyrBrowseIdx >= 0 ? lyrBrowseIdx : lyrLineAtCenter());
+  if (idx < 0 || idx >= lrc.length) idx = lyrFollowing ? lyrActive : lyrLineAtCenter();
+  if (idx < 0 || idx >= lrc.length) return;
+  const line = lrc[idx];
   if (!line || typeof line.time !== 'number') return;
   const target = line.time;
   if (audio && isFinite(audio.currentTime)) audio.currentTime = target;
   if (audio && audio.paused) audio.play();
-  if (!lyrFollowing) lyrFollowing = true; // 兜底：按钮仅在跟随态可见
+  if (!lyrFollowing) {
+    // 从浏览态跳播：恢复跟随并把该句归中
+    lyrFollowing = true;
+    lyrCancelAutoReturn();
+    lyrSetActiveTo(idx, true);
+    lyrOffset = lyrClampOffset(lyrCenterOffset(idx));
+    lyrTransient = false;
+    lyrLayout();
+  }
+  lyrUpdateJumpUi();
   const t = state.playlist[state.currentIndex];
   if (t && t._lrc === lyrLrc) renderLyricWindow(t, target);
 }
@@ -1363,6 +1446,7 @@ document.addEventListener('pointerdown', (e) => {
   if (t && t.closest && (t.closest('#lyric-jump-pop') || t.closest('#lyric-jump'))) return;
   lyrPopOpen = false;
   if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
+  if (!lyrFollowing) lyrScheduleAutoReturn(); // 点击别处关闭气泡：浏览态恢复自动回位
 });
 
 /** 隐藏歌词区、清空列表与全部引擎状态（切歌/无歌词时调用）。
@@ -1373,6 +1457,7 @@ function resetLyricDisplay() {
   lyrCancelAnim();
   lyrPointerDrag = null;
   lyrPopOpen = false;
+  lyrBrowseIdx = -1;
   if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
   lyrTransient = false;
   if (lyricList) lyricList.innerHTML = '';
@@ -1815,7 +1900,13 @@ window.addEventListener('resize', () => {
   }
   // 窗口尺寸变化：重算歌词几何并重定位（行高/可视高可能已变）
   lyricRefreshGeometry();
+  if ((appSettings.deviceType || 'auto') === 'auto') resolveDeviceLayout();
 });
+// 设备形态自动判定：旋转 / 触屏状态变化也需重新解析布局
+window.addEventListener('orientationchange', () => { resolveDeviceLayout(); });
+try {
+  if (window.matchMedia) window.matchMedia('(pointer: coarse)').addEventListener('change', () => { resolveDeviceLayout(); });
+} catch (_) {}
 
 // ==============================
 // 均衡器功能
@@ -2054,6 +2145,7 @@ const SETTINGS_DEFAULT = {
   colorMain: '#f1f0ff',
   colorTranscode: '#111111',  // 转码面板文字默认黑色（毛玻璃下浅色看不清）
   colorEqualizer: '#f1f0ff',
+  deviceType: 'auto',     // 设备形态 auto|phone|tablet
 };
 let appSettings = { ...SETTINGS_DEFAULT };
 
@@ -2084,10 +2176,28 @@ function applySettings() {
   root.setProperty('--lyric-color', appSettings.lyricColor || '#ffffff');
   if (lyricSection) lyricSection.classList.toggle('rainbow', !!(appSettings.lyricEnabled && appSettings.lyricRainbow));
   // 歌词几何（行高/可视高/当前句展开实测）随字号等设置变化联动
-  lyricRefreshGeometry();
+  applyDeviceLayout(); // 内含 resolveDeviceLayout() + lyricRefreshGeometry()
   applyAppTitle();
   updateBgVeil();
 }
+
+// 设备形态 → <html data-layout>。auto=按短边尺寸判定（<600px=phone，否则 tablet）。
+// 仅触屏(coarse)生效；桌面(fine)不设 → CSS 保持桌面/窗口宽度布局。
+function resolveDeviceLayout() {
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const dt = appSettings.deviceType || 'auto';
+  let layout = '';
+  if (coarse) {
+    layout = (dt === 'phone' || dt === 'tablet')
+      ? dt
+      : (Math.min(window.innerWidth, window.innerHeight) >= 600 ? 'tablet' : 'phone');
+  }
+  const root = document.documentElement;
+  if (layout) root.setAttribute('data-layout', layout);
+  else root.removeAttribute('data-layout');
+  return layout;
+}
+function applyDeviceLayout() { resolveDeviceLayout(); lyricRefreshGeometry(); }
 
 // 应用标题：把顶栏 logo 文字与音符标志写到 DOM（自定义文字，持久化到设置）
 // 文字清空时不回退成 "MusicPlayer"，直接隐藏文字节点
@@ -2292,6 +2402,23 @@ function bindSettingsEvents() {
     refreshCoverRot(); refreshLyric();
     if (typeof showToast === 'function') showToast('已恢复默认外观');
   });
+
+  // 设备形态三分段（自动/手机/平板）
+  const devSeg = document.getElementById('set-device-seg');
+  if (devSeg) {
+    const refreshDevSeg = () => {
+      devSeg.querySelectorAll('.dev-seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.devtype === (appSettings.deviceType || 'auto'));
+      });
+    };
+    devSeg.querySelectorAll('.dev-seg-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        appSettings.deviceType = b.dataset.devtype || 'auto';
+        saveSettings(); applyDeviceLayout(); refreshDevSeg();
+      });
+    });
+    refreshDevSeg();
+  }
 
   refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode(); refreshCoverRot(); refreshLyric();
 }
@@ -2781,7 +2908,29 @@ function initFirstLaunch() {
     } catch {}
     df?.classList.add('hidden');
     if (typeof showToast === 'function') showToast('数据将保存到：' + dfLabel(choice));
+    maybeShowDeviceStep();
   });
+}
+
+// 首启第三步：设备形态选择。仅触屏(coarse)弹；桌面直接按新机制解析布局。
+// 已设过 phone/tablet（非 auto）仍弹一次并预选已设值，供用户改；FL_KEY 已置 1 只弹这一次。
+function maybeShowDeviceStep() {
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  if (!coarse) { applyDeviceLayout(); return; } // 桌面不弹
+  const ov = document.getElementById('device-overlay');
+  if (!ov) { applyDeviceLayout(); return; }
+  const detected = Math.min(window.innerWidth, window.innerHeight) >= 600 ? 'tablet' : 'phone';
+  const preset = (appSettings.deviceType === 'phone' || appSettings.deviceType === 'tablet') ? appSettings.deviceType : detected;
+  document.querySelectorAll('input[name="dev"]').forEach(r => { r.checked = (r.value === preset); });
+  ov.classList.remove('hidden');
+  const onConfirm = () => {
+    const sel = document.querySelector('input[name="dev"]:checked');
+    appSettings.deviceType = sel ? sel.value : detected;
+    saveSettings(); applyDeviceLayout();
+    ov.classList.add('hidden');
+    document.getElementById('btn-dev-confirm')?.removeEventListener('click', onConfirm);
+  };
+  document.getElementById('btn-dev-confirm')?.addEventListener('click', onConfirm);
 }
 
 // ================================================================
@@ -2879,6 +3028,7 @@ try {
   console.log('[Init] applyBackground ok');
   initFirstLaunch();
   console.log('[Init] initFirstLaunch ok');
+  applyDeviceLayout(); // 老用户升级后立刻按新机制解析设备形态布局
 } catch (e) {
   console.error('[Bg/Launch] 初始化失败:', e);
 }
