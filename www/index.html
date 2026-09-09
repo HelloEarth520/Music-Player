@@ -22,6 +22,17 @@
        系统层壁纸无法被 CSS backdrop-filter 采样，保持清晰直出。 -->
   <div id="bg-veil" class="bg-veil"></div>
 
+  <!-- 图标炫彩渐变定义（v2.22.4）：主界面默认白/浅色 SVG 图标经 fill:url(#fx-ic-grad) 上彩虹 -->
+  <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="fx-ic-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#22d3ee"/>
+        <stop offset="50%" stop-color="#a78bfa"/>
+        <stop offset="100%" stop-color="#f472b6"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
   <div class="app">
     <!-- 顶部标题栏 -->
     <header class="titlebar">
@@ -112,15 +123,12 @@
           <div id="lyric-viewport" class="lyric-viewport">
             <div id="lyric-list" class="lyric-list"></div>
           </div>
-          <!-- 中间行右侧：破折号 + 播放按钮 → 点击弹出扁椭圆气泡「从此句播放」 -->
+          <!-- 中间行右侧：破折号 + 播放按钮 → 直接从此句播放（v2.21 取消中间气泡）。
+               可见性：滑动/浏览歌词时显示；回到跟随播放（含自动回位完成）后消失 -->
           <button id="lyric-jump" class="lyric-jump" title="从此句开始播放" aria-label="从此句开始播放">
             <span class="lyric-jump-dash">—</span>
             <svg class="lyric-jump-icon" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><polygon points="18,3 4,12 18,21"/></svg>
           </button>
-          <div id="lyric-jump-pop" class="lyric-jump-pop hidden">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="18,3 4,12 18,21"/></svg>
-            <span>从此句播放</span>
-          </div>
         </div>
 
         <!-- 控制按钮（纯 SVG 图标，无表情） -->
@@ -210,7 +218,7 @@
       <div class="equalizer-body">
         <div class="eq-controls-row">
           <button id="btn-eq-toggle" class="eq-toggle active">开启</button>
-          <select id="eq-preset" class="eq-preset">
+          <select id="eq-preset" class="eq-preset fx-select">
             <option value="flat">默认 (Flat)</option>
             <option value="bass">重低音 (Bass)</option>
             <option value="vocal">人声 (Vocal)</option>
@@ -321,7 +329,7 @@
           <div class="tc-form">
             <div class="tc-row">
               <label>输出格式</label>
-              <select id="tc-format">
+              <select id="tc-format" class="fx-select">
                 <option value="mp3">MP3</option>
                 <option value="flac">FLAC（无损）</option>
                 <option value="wav">WAV（无损）</option>
@@ -334,7 +342,7 @@
 
             <div class="tc-row" id="row-bitrate">
               <label>比特率</label>
-              <select id="tc-bitrate">
+              <select id="tc-bitrate" class="fx-select">
                 <option value="64k">64 kbps（省流）</option>
                 <option value="128k">128 kbps</option>
                 <option value="192k" selected>192 kbps（推荐）</option>
@@ -345,7 +353,7 @@
 
             <div class="tc-row">
               <label>采样率</label>
-              <select id="tc-samplerate">
+              <select id="tc-samplerate" class="fx-select">
                 <option value="22050">22050 Hz</option>
                 <option value="44100" selected>44100 Hz（CD）</option>
                 <option value="48000">48000 Hz（专业）</option>
@@ -355,7 +363,7 @@
 
             <div class="tc-row">
               <label>声道</label>
-              <select id="tc-channels">
+              <select id="tc-channels" class="fx-select">
                 <option value="1">单声道</option>
                 <option value="2" selected>立体声</option>
               </select>
@@ -572,7 +580,27 @@
             <span class="settings-group-title">转码 (Transcode)</span>
             <button id="set-transcode-toggle" class="set-toggle">关闭</button>
           </div>
-          <div class="settings-hint">关闭后启动时不加载原生 FFmpeg 引擎（节省内存）；开启后顶栏出现「转码」按钮，首次使用才加载</div>
+          <div class="settings-hint">开启：顶栏显示「转码」按钮，首次使用才加载原生 FFmpeg（节省内存）；关闭：顶栏隐藏「转码」按钮且不加载引擎</div>
+        </div>
+
+        <!-- 顶栏按钮：均衡器 / 打开文件 / 打开文件夹 显隐 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">顶栏按钮 (Toolbar Buttons)</span>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">均衡器按钮</span>
+            <button id="set-eq-btn-toggle" class="set-toggle">关闭</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">打开文件按钮</span>
+            <button id="set-show-file-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">打开文件夹按钮</span>
+            <button id="set-show-folder-toggle" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-hint">控制顶栏各按钮显隐：均衡器默认隐藏（引擎仍可在均衡器面板内手动开启），打开文件/打开文件夹默认显示</div>
         </div>
 
         <!-- 封面旋转：播放时封面圆内显示歌曲同目录封面图并旋转 -->
@@ -620,35 +648,25 @@
           <div class="settings-hint">自定义顶栏左上角的名称，可单独关闭音符 🎵 标志</div>
         </div>
 
-        <!-- 文字颜色：每区域一个取色器 -->
+        <!-- 炫彩文字：设置/均衡器/转码 弹窗文字用炫彩渐变流光（默认开启） -->
         <div class="settings-group glass">
           <div class="settings-group-head">
-            <span class="settings-group-title">文字颜色 (Text Color)</span>
-            <button id="set-color-reset" class="set-toggle active" title="恢复默认颜色">默认</button>
+            <span class="settings-group-title">全局炫彩文字 (Glow Text)</span>
+            <button id="set-glow-toggle" class="set-toggle active">开启</button>
           </div>
-          <div class="color-grid">
-            <label class="color-item">
-              <span>顶栏</span>
-              <input type="color" id="set-color-titlebar" class="set-color" value="#f1f0ff" />
-            </label>
-            <label class="color-item">
-              <span>歌曲列表</span>
-              <input type="color" id="set-color-playlist" class="set-color" value="#f1f0ff" />
-            </label>
-            <label class="color-item">
-              <span>主界面</span>
-              <input type="color" id="set-color-main" class="set-color" value="#f1f0ff" />
-            </label>
-            <label class="color-item">
-              <span>转码面板</span>
-              <input type="color" id="set-color-transcode" class="set-color" value="#111111" />
-            </label>
-            <label class="color-item">
-              <span>均衡器面板</span>
-              <input type="color" id="set-color-equalizer" class="set-color" value="#f1f0ff" />
-            </label>
+          <div class="settings-hint">除首开向导三页（协议声明/数据目录/设备形态）与歌词区（有独立「炫彩流逝」开关）外，全部文字与主界面图标使用炫彩渐变流光：顶栏按钮、时钟、弹窗与设置项、播放列表与主页文字（歌名/歌手/时间/音量等）、播放控制图标。关闭则全部回退默认纯色。</div>
+        </div>
+
+        <!-- 动画速度：炫彩流光 + 封面旋转 + 卡片描边跑马灯 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">动画速度 (Speed)</span>
           </div>
-          <div class="settings-hint">为每个区域单独设置字体颜色，拖动即时预览</div>
+          <div class="settings-row">
+            <input type="range" id="set-fx-speed-slider" min="3" max="60" value="10" step="1" class="set-slider" />
+            <span id="set-fx-speed-val" class="set-val">10s</span>
+          </div>
+          <div class="settings-hint">统一控制炫彩流光、封面旋转、当前播放卡片描边跑马灯的速度（秒/圈），数值越大越慢</div>
         </div>
 
         <!-- 背景来源：4 选 1 -->
@@ -679,7 +697,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.19.1</span>
+        <span class="settings-version">v2.22.0</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

@@ -55,17 +55,18 @@ const state = {
 };
 
 // ==============================
-// 内存管理：最多 200MB，只保留当前/上一首/下一首 的 ObjectURL
+// 内存管理：软上限 1.5GB，只保留当前/相邻曲目的 ObjectURL（2026-09-08 由 200MB 调大，
+// 此前 200MB 上限过紧导致切歌频繁重建 URL、后台偶发卡顿；1.5GB 仅为防失控 OOM 的护栏）
 // ==============================
-const MAX_MEMORY_BYTES = 200 * 1024 * 1024; // 200MB
+const MAX_MEMORY_BYTES = 1536 * 1024 * 1024; // 1.5GB
 let totalMemoryBytes = 0;  // 已加载音频占用的近似内存
 
 /**
  * 内存管理：保留当前播放曲目附近最大范围的 ObjectURL
  *
  * 规则：
- *  - 内存足够（<200MB）：保留 N-2, N-1, N, N+1, N+2（5 首）
- *  - 内存超限（>=200MB）：缩小到 N-1, N, N+1（3 首）
+ *  - 内存足够（<1.5GB）：保留 N-2, N-1, N, N+1, N+2（5 首）
+ *  - 内存超限（>=1.5GB）：缩小到 N-1, N, N+1（3 首）
  *  - 初始加载：只建前 3 首的 URL
  */
 function cleanupObjectURLs(keepIndex) {
@@ -179,7 +180,6 @@ const lyricSection  = $('lyric-section');
 const lyricViewport = $('lyric-viewport');
 const lyricList     = $('lyric-list');
 const lyricJumpBtn  = $('lyric-jump');
-const lyricJumpPop  = $('lyric-jump-pop');
 const playlistEl    = $('playlist');
 const trackCount    = $('track-count');
 const fileInput     = $('file-input');
@@ -1005,7 +1005,6 @@ let lyrFollowing = true;  // true=跟随播放（当前句居中）；false=用�
 let lyrReturnTimer = null;// 5s 自动回位定时器
 let lyrAnim = null;       // 回位平滑动画 rAF id
 let lyrPointerDrag = null;// { id, startY, startOffset, moved }
-let lyrPopOpen = false;   // 「从此句播放」气泡是否展开
 let lyrVisA = -1, lyrVisB = -1;  // 上次可视行区间（[首, 尾]），用于清理离窗行
 let lyrTransient = false; // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
 let lyrTransientTimer = null;
@@ -1240,15 +1239,15 @@ function lyrScheduleAutoReturn() {
   lyrReturnTimer = setTimeout(lyrFireAutoReturn, LYR_AUTO_RETURN_MS);
 }
 
-/** 进入浏览态：停止跟随、清定时器/动画、隐藏悬浮控件 */
+/** 进入浏览态：停止跟随、清定时器/动画；v2.21 起浏览态显示跳句按钮 */
 function lyrEnterBrowse() {
   if (!lyrItems || !lyrItems.length) return;
   lyrFollowing = false;
   lyrBrowseIdx = -1;  // 进入浏览即重置落点句
   lyrCancelAutoReturn();
   lyrCancelAnim();
-  lyrHideJumpUi();
   lyrTransient = true;
+  lyrUpdateJumpUi();  // 滑动一开始就显示「从此句播放」按钮
 }
 
 /** 回位：恢复跟随并把当前播放行平滑滚回视口中心 */
@@ -1348,7 +1347,7 @@ function lyrOnWheel(e) {
     lyrCancelAnim();
   } else {
     lyrFollowing = false;
-    lyrHideJumpUi();
+    lyrUpdateJumpUi();  // v2.21：滚轮进入浏览 → 显示跳句按钮
   }
   const factor = (e.deltaMode === 1) ? 16 : 1;  // Firefox 行模式 → px
   lyrOffset = lyrClampOffset(lyrOffset - (e.deltaY * factor)); // 滚轮向下 = 看后面的歌词
@@ -1366,48 +1365,31 @@ function lyrOnWheel(e) {
   e.preventDefault();
 }
 
-// ---- 悬浮控件：jump 按钮 + 「从此句播放」气泡 ----
+// ---- 悬浮控件：jump 按钮（v2.21：取消中间气泡，点按钮直接跳句） ----
 
 function lyrHideJumpUi() {
   if (lyricJumpBtn) lyricJumpBtn.classList.remove('visible');
-  if (lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
 }
-/** 更新 jump 按钮可见性：歌词区可见且有行。
- *  跟随态：按钮在播放句（视口中心）上 → 点击从该句播放；
- *  浏览态（用户滑动后静止）：按钮仍显示，对应「视口中心的歌词行」→ 从看的那句播放。
- *  拖拽/回位动画进行中隐藏，防误触。 */
+/** 更新 jump 按钮可见性（v2.21 语义反转）：
+ *  歌词区可见、有歌词行、且处于「浏览态」（用户滑动/滚轮浏览中，未跟随播放）→ 显示；
+ *  回到跟随播放（点按钮跳句 / 自动回位完成 / 单击未拖动）→ 隐藏。
+ *  不再用拖拽/动画 busy 隐藏：滑动全程按钮常显，方便随手点。 */
 function lyrUpdateJumpUi() {
   if (!lyricSection || lyricSection.classList.contains('hidden')) {
     lyrHideJumpUi();
     return;
   }
-  const busy = !!lyrPointerDrag || lyrTransient;
-  const hasLine = lyrFollowing ? (lyrActive >= 0) : (lyrLineAtCenter() >= 0);
-  const visible = !!(lyrItems && lyrItems.length > 0 && !busy && hasLine);
+  const visible = !!(lyrItems && lyrItems.length > 0 && !lyrFollowing);
   if (lyricJumpBtn) lyricJumpBtn.classList.toggle('visible', visible);
-  if (!visible && lyricJumpPop) { lyricJumpPop.classList.add('hidden'); lyrPopOpen = false; }
 }
-function lyrOnJumpBtnClick(e) {
-  e.stopPropagation();
-  if (!lyricJumpPop) return;
-  if (lyrPopOpen) {
-    lyrPopOpen = false;
-    lyricJumpPop.classList.add('hidden');
-    if (!lyrFollowing) lyrScheduleAutoReturn(); // 关闭气泡后恢复 5s 自动回位
-  } else {
-    lyrPopOpen = true;
-    lyricJumpPop.classList.remove('hidden');
-    lyrCancelAutoReturn(); // 气泡开着不自动回位，避免“看着中心句却跳回播放句”的竞态
-  }
-}
-function lyrOnJumpPopClick() {
-  if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
-  lyrPopOpen = false;
+/** 点右侧小按钮：直接从「当前所看的那一句」开始播放（无中间气泡） */
+function lyrOnJumpClick(e) {
+  if (e && e.stopPropagation) e.stopPropagation();
   const lrc = lyrLrc;
   if (!lrc || !lrc.length) return;
   // 跟随态 → 播放句；浏览态 → 落点句（吸附后的视口中心句，优先于实时重算，防自动回位竞态）
   let idx = lyrFollowing ? lyrActive : (lyrBrowseIdx >= 0 ? lyrBrowseIdx : lyrLineAtCenter());
-  if (idx < 0 || idx >= lrc.length) idx = lyrFollowing ? lyrActive : lyrLineAtCenter();
+  if (idx < 0 || idx >= lrc.length) idx = lyrLineAtCenter();
   if (idx < 0 || idx >= lrc.length) return;
   const line = lrc[idx];
   if (!line || typeof line.time !== 'number') return;
@@ -1423,7 +1405,7 @@ function lyrOnJumpPopClick() {
     lyrTransient = false;
     lyrLayout();
   }
-  lyrUpdateJumpUi();
+  lyrUpdateJumpUi();  // 恢复跟随 → 按钮随即消失
   const t = state.playlist[state.currentIndex];
   if (t && t._lrc === lyrLrc) renderLyricWindow(t, target);
 }
@@ -1438,16 +1420,7 @@ if (lyricViewport && window.PointerEvent) {
 if (lyricViewport) {
   lyricViewport.addEventListener('wheel', lyrOnWheel, { passive: false });
 }
-if (lyricJumpBtn) lyricJumpBtn.addEventListener('click', lyrOnJumpBtnClick);
-if (lyricJumpPop) lyricJumpPop.addEventListener('click', lyrOnJumpPopClick);
-document.addEventListener('pointerdown', (e) => {
-  if (!lyrPopOpen) return;
-  const t = e.target;
-  if (t && t.closest && (t.closest('#lyric-jump-pop') || t.closest('#lyric-jump'))) return;
-  lyrPopOpen = false;
-  if (lyricJumpPop) lyricJumpPop.classList.add('hidden');
-  if (!lyrFollowing) lyrScheduleAutoReturn(); // 点击别处关闭气泡：浏览态恢复自动回位
-});
+if (lyricJumpBtn) lyricJumpBtn.addEventListener('click', lyrOnJumpClick);
 
 /** 隐藏歌词区、清空列表与全部引擎状态（切歌/无歌词时调用）。
  *  同时失效当前歌的防抖窗口，避免"切走再切回同一首歌、且当前句相同"
@@ -1456,7 +1429,6 @@ function resetLyricDisplay() {
   lyrCancelAutoReturn();
   lyrCancelAnim();
   lyrPointerDrag = null;
-  lyrPopOpen = false;
   lyrBrowseIdx = -1;
   if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
   lyrTransient = false;
@@ -1613,14 +1585,32 @@ function updatePlayBtn() {
   }
 }
 
+// 封面旋转：JS 实时累加角度驱动（非 CSS 动画）。
+// 原因：CSS animation-duration 中途改动会按新时长“从头计算”播放进度 → 封面乱转；
+// 改为按时间差累加角度（角度 = 360/fxSpeed 每秒），调速度/暂停/续播都从当前位置连续走。
+let coverAngle = 0;
+let coverRaf = 0;
+let coverLastTs = 0;
+function coverTick(ts) {
+  coverRaf = requestAnimationFrame(coverTick);
+  if (coverLastTs) {
+    const secPerTurn = (appSettings && appSettings.fxSpeed > 0) ? appSettings.fxSpeed : 10;
+    coverAngle = (coverAngle + ((ts - coverLastTs) / 1000) * (360 / secPerTurn)) % 360;
+    if (cover) cover.style.transform = 'rotate(' + coverAngle + 'deg)';
+  }
+  coverLastTs = ts;
+}
 function startCoverSpin() {
   cover.classList.remove('spinning-paused');
   cover.classList.add('spinning');
+  document.documentElement.style.setProperty('--ring-run', 'running');
+  if (!coverRaf) { coverLastTs = 0; coverRaf = requestAnimationFrame(coverTick); }
 }
-
 function pauseCoverSpin() {
   cover.classList.remove('spinning');
   cover.classList.add('spinning-paused');
+  document.documentElement.style.setProperty('--ring-run', 'paused');
+  if (coverRaf) { cancelAnimationFrame(coverRaf); coverRaf = 0; }
 }
 
 // ==============================
@@ -1706,6 +1696,25 @@ audio.addEventListener('timeupdate', () => {
   progressFill.style.width = `${pct}%`;
   progressThumb.style.left = `${pct}%`;
   currentTime.textContent = formatTime(audio.currentTime);
+});
+
+// 统一播放状态同步（2026-09-08）：无论从应用内按钮、通知栏/锁屏媒体控制还是系统
+// 快捷键触发，<audio> 都会派发 play/pause 事件。据此同步 state.isPlaying、播放按钮
+// 图标与封面旋转，避免"通知栏已暂停但回应用后封面仍在转、按钮仍显示播放中"的状态脱节。
+function syncPlaybackStateFromAudio() {
+  if (!audio) return;
+  const playing = !audio.paused;
+  if (state.isPlaying !== playing) {
+    state.isPlaying = playing;
+    updatePlayBtn();
+    if (playing) startCoverSpin(); else pauseCoverSpin();
+  }
+}
+audio.addEventListener('play', syncPlaybackStateFromAudio);
+audio.addEventListener('pause', syncPlaybackStateFromAudio);
+// 兜底：从后台/锁屏回到应用时强制同步一次（覆盖 WebView 被系统冻结、事件延迟派发的边缘情况）
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) syncPlaybackStateFromAudio();
 });
 
 // 歌词随播放进度滚动（当前句 + 前后 2 行）
@@ -1982,8 +1991,14 @@ function updateEQDisplay(index, value) {
 }
 
 function toggleEQ(enabled) {
-  ensureEqInit();
-  eqState.enabled = enabled;
+  // 2026-09-08：只有"开启"才创建 AudioContext（WebAudio 会永久接管 <audio> 输出，
+  // 后台/息屏时被系统限频即卡顿）。关闭时若图已存在只归零 gain，绝不新建图。
+  if (enabled) {
+    ensureEqInit();
+    eqState.enabled = true;
+  } else {
+    eqState.enabled = false;
+  }
   appSettings.eqEnabled = enabled;
   saveSettings();
   const btn = document.getElementById('btn-eq-toggle');
@@ -1999,9 +2014,11 @@ function toggleEQ(enabled) {
     btn.textContent = '关闭';
     btn.classList.remove('active');
     // 重置所有增益为 0
-    eqState.filters.forEach(filter => {
-      filter.gain.value = 0;
-    });
+    if (eqState.filters) {
+      eqState.filters.forEach(filter => {
+        filter.gain.value = 0;
+      });
+    }
   }
 }
 
@@ -2015,7 +2032,9 @@ function ensureEqInit() {
 }
 
 function openEqualizer() {
-  ensureEqInit();
+  // 2026-09-08：仅当均衡器开关已开启才创建 AudioContext（面板"开启"按钮负责建图）。
+  // 默认关闭时打开面板只浏览滑块，不接管 <audio> → 后台/息屏播放保持系统直出不卡。
+  if (eqState.enabled) ensureEqInit();
   document.getElementById('equalizer-overlay')?.classList.remove('hidden');
   startEQVisualizer();
 }
@@ -2129,15 +2148,17 @@ function bindEqualizerEvents() {
 // ==============================
 const SETTINGS_KEY = 'musicplayer_appearance';
 const SETTINGS_DEFAULT = {
+  settingsVersion: 3,   // 设置结构版本：3 = 顶栏按钮显隐 + 全局动画速度 + 转码语义改为顶栏显隐（2026-09-08）
   blurOn: true, blurPx: 10,
   frostOn: true, frostPct: 18,
-  eqEnabled: true,   // 均衡器开关：true=启动即加载 AudioContext；false=启动不加载（首次打开面板再懒加载）
+  eqEnabled: false,  // 均衡器开关：默认关闭——开启才创建 AudioContext(WebAudio 接管 audio)；关闭则 audio 直出系统，后台/息屏播放最稳
   transcodeEnabled: false, // 转码开关：false=启动不初始化原生 FFmpeg（不占内存）；true=启用后懒加载
   coverRotEnabled: true,   // 封面旋转：true=封面圆显示歌曲同目录封面图并随播放旋转；false=保持音符标志
   lyricEnabled: true,      // 歌词显示开关（同目录 .lrc）
   lyricFontSize: 15,       // 歌词字号 px
   lyricColor: '#ffffff',   // 歌词颜色（默认白色，透明设计）
   lyricRainbow: false,     // 炫彩流逝样式（当前行渐变色流动）
+  glowText: true,          // 炫彩流光文字（设置/均衡器/转码弹窗文字）
   appTitle: 'MusicPlayer-一切皆可自定',  // 顶栏左上角自定义文字
   showLogoMark: true,       // 是否显示音符 🎵 标志
   colorTitlebar: '#f1f0ff',
@@ -2146,13 +2167,35 @@ const SETTINGS_DEFAULT = {
   colorTranscode: '#111111',  // 转码面板文字默认黑色（毛玻璃下浅色看不清）
   colorEqualizer: '#f1f0ff',
   deviceType: 'auto',     // 设备形态 auto|phone|tablet
+  showEqBtn: false,       // 顶栏「均衡器」按钮显隐（默认隐藏；引擎仍在均衡器面板内手动开）
+  showOpenFileBtn: true,  // 顶栏「打开文件」按钮显隐
+  showOpenFolderBtn: true,// 顶栏「打开文件夹」按钮显隐
+  fxSpeed: 10,            // 全局动画速度：秒/圈（炫彩流光+封面旋转+卡片描边跑马灯共用一个 --fx-speed）
 };
 let appSettings = { ...SETTINGS_DEFAULT };
 
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) appSettings = Object.assign({}, SETTINGS_DEFAULT, JSON.parse(raw));
+    if (raw) {
+      appSettings = Object.assign({}, SETTINGS_DEFAULT, JSON.parse(raw));
+      // 一次性迁移：旧数据无 settingsVersion → eqEnabled 曾默认 true 被持久化，
+      // 现改为默认 false（后台卡顿根因），回落新默认并写回。
+      if (!appSettings.settingsVersion && appSettings.eqEnabled) {
+        appSettings.eqEnabled = false;
+        saveSettings();
+      }
+      // v3 迁移：新引入按钮显隐与全局速度；转码开关语义改为「顶栏显隐」且默认开启
+      if (!appSettings.settingsVersion || appSettings.settingsVersion < 3) {
+        appSettings.showEqBtn = false;
+        appSettings.showOpenFileBtn = true;
+        appSettings.showOpenFolderBtn = true;
+        if (typeof appSettings.fxSpeed !== 'number') appSettings.fxSpeed = 10;
+        appSettings.transcodeEnabled = true; // 新语义：关闭才隐藏顶栏按钮；引擎仍首次使用懒加载
+        appSettings.settingsVersion = 3;
+        saveSettings();
+      }
+    }
   } catch { appSettings = { ...SETTINGS_DEFAULT }; }
 }
 
@@ -2166,6 +2209,7 @@ function applySettings() {
   const blur = appSettings.blurOn ? appSettings.blurPx : 0;
   const alpha = appSettings.frostOn ? (appSettings.frostPct / 100) : 0;
   root.setProperty('--glass-blur', blur + 'px');
+  root.setProperty('--fx-speed', (appSettings.fxSpeed || 10) + 's');
   root.setProperty('--glass-frost', alpha.toFixed(3));
   root.setProperty('--text-titlebar', appSettings.colorTitlebar);
   root.setProperty('--text-playlist', appSettings.colorPlaylist);
@@ -2179,6 +2223,23 @@ function applySettings() {
   applyDeviceLayout(); // 内含 resolveDeviceLayout() + lyricRefreshGeometry()
   applyAppTitle();
   updateBgVeil();
+  applyToolbarButtons();
+  applyGlowText();
+}
+
+// 全局主菜单炫彩文字：关闭时给 <html> 加 .fx-off，
+// CSS 里对应选择器组逐项回退为各自纯色。
+function applyGlowText() {
+  const root = document.documentElement;
+  root.classList.toggle('fx-off', !appSettings.glowText);
+}
+
+// 顶栏按钮显隐：均衡器 / 打开文件 / 打开文件夹（转码按钮由 applyTranscodeEnabled 管）
+function applyToolbarButtons() {
+  const set = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  set('btn-equalizer', !!appSettings.showEqBtn);
+  set('btn-open-file', !!appSettings.showOpenFileBtn);
+  set('btn-open-folder', !!appSettings.showOpenFolderBtn);
 }
 
 // 设备形态 → <html data-layout>。auto=按短边尺寸判定（<600px=phone，否则 tablet）。
@@ -2212,18 +2273,15 @@ function applyAppTitle() {
   if (logoMark) logoMark.style.display = appSettings.showLogoMark ? '' : 'none';
 }
 
-// 转码开关：控制顶栏「转码」按钮是否可用，以及是否允许原生 FFmpeg 初始化
+// 转码开关：控制顶栏「转码」按钮显隐，以及是否允许原生 FFmpeg 初始化
 function applyTranscodeEnabled() {
   const btn = document.getElementById('btn-transcode');
   if (!btn) return;
   if (appSettings.transcodeEnabled) {
-    btn.disabled = false;
-    btn.classList.remove('tc-disabled');
+    btn.style.display = '';
     btn.title = '转码工具';
   } else {
-    btn.disabled = true;
-    btn.classList.add('tc-disabled');
-    btn.title = '转码功能已关闭，请在「设置」中开启';
+    btn.style.display = 'none';
   }
 }
 
@@ -2265,35 +2323,6 @@ function bindSettingsEvents() {
   const stepFrost = (d) => { appSettings.frostPct = Math.max(0, Math.min(100, appSettings.frostPct + d)); refreshFrost(); };
   frostMinus?.addEventListener('click', () => stepFrost(-5));
   frostPlus?.addEventListener('click', () => stepFrost(5));
-
-  // 文字颜色：每区域一个取色器，实时写入 CSS 变量
-  const colorMap = {
-    'set-color-titlebar':  ['colorTitlebar',  '--text-titlebar'],
-    'set-color-playlist':  ['colorPlaylist',  '--text-playlist'],
-    'set-color-main':      ['colorMain',      '--text-main'],
-    'set-color-transcode': ['colorTranscode', '--text-transcode'],
-    'set-color-equalizer': ['colorEqualizer', '--text-equalizer'],
-  };
-  const refreshColors = () => {
-    Object.entries(colorMap).forEach(([id, [key, varName]]) => {
-      const el = document.getElementById(id);
-      if (el) { el.value = appSettings[key]; document.documentElement.style.setProperty(varName, appSettings[key]); }
-    });
-    applySettings(); saveSettings();
-  };
-  Object.entries(colorMap).forEach(([id, [key]]) => {
-    const el = document.getElementById(id);
-    el?.addEventListener('input', (e) => { appSettings[key] = e.target.value; refreshColors(); });
-  });
-  document.getElementById('set-color-reset')?.addEventListener('click', () => {
-    appSettings.colorTitlebar  = SETTINGS_DEFAULT.colorTitlebar;
-    appSettings.colorPlaylist  = SETTINGS_DEFAULT.colorPlaylist;
-    appSettings.colorMain      = SETTINGS_DEFAULT.colorMain;
-    appSettings.colorTranscode = SETTINGS_DEFAULT.colorTranscode;
-    appSettings.colorEqualizer = SETTINGS_DEFAULT.colorEqualizer;
-    refreshColors();
-    if (typeof showToast === 'function') showToast('已恢复默认文字颜色');
-  });
 
   // 应用标题：自定义文字 + 音符标志开关
   const appTitleInput = document.getElementById('set-app-title');
@@ -2342,6 +2371,30 @@ function bindSettingsEvents() {
     }
   };
   tcToggle?.addEventListener('click', () => { appSettings.transcodeEnabled = !appSettings.transcodeEnabled; refreshTranscode(); });
+
+  // 顶栏按钮显隐三开关：均衡器 / 打开文件 / 打开文件夹
+  const eqBtnToggle = document.getElementById('set-eq-btn-toggle');
+  const showFileToggle = document.getElementById('set-show-file-toggle');
+  const showFolderToggle = document.getElementById('set-show-folder-toggle');
+  const refreshBtnVis = () => {
+    if (eqBtnToggle) { eqBtnToggle.classList.toggle('active', !!appSettings.showEqBtn); eqBtnToggle.textContent = appSettings.showEqBtn ? '开启' : '关闭'; }
+    if (showFileToggle) { showFileToggle.classList.toggle('active', !!appSettings.showOpenFileBtn); showFileToggle.textContent = appSettings.showOpenFileBtn ? '开启' : '关闭'; }
+    if (showFolderToggle) { showFolderToggle.classList.toggle('active', !!appSettings.showOpenFolderBtn); showFolderToggle.textContent = appSettings.showOpenFolderBtn ? '开启' : '关闭'; }
+    applyToolbarButtons(); saveSettings();
+  };
+  eqBtnToggle?.addEventListener('click', () => { appSettings.showEqBtn = !appSettings.showEqBtn; refreshBtnVis(); });
+  showFileToggle?.addEventListener('click', () => { appSettings.showOpenFileBtn = !appSettings.showOpenFileBtn; refreshBtnVis(); });
+  showFolderToggle?.addEventListener('click', () => { appSettings.showOpenFolderBtn = !appSettings.showOpenFolderBtn; refreshBtnVis(); });
+
+  // 全局动画速度：炫彩流光 / 封面旋转 / 卡片描边跑马灯共用 --fx-speed
+  const fxSpeedSlider = document.getElementById('set-fx-speed-slider');
+  const fxSpeedVal = document.getElementById('set-fx-speed-val');
+  const refreshFxSpeed = () => {
+    if (fxSpeedSlider) fxSpeedSlider.value = appSettings.fxSpeed;
+    if (fxSpeedVal) fxSpeedVal.textContent = appSettings.fxSpeed + 's';
+    applySettings(); saveSettings();
+  };
+  fxSpeedSlider?.addEventListener('input', (e) => { appSettings.fxSpeed = parseInt(e.target.value, 10) || 10; refreshFxSpeed(); });
 
   // 封面旋转开关
   const coverRotToggle = document.getElementById('set-cover-rot-toggle');
@@ -2395,11 +2448,22 @@ function bindSettingsEvents() {
   lyricColorInput?.addEventListener('input', (e) => { appSettings.lyricColor = e.target.value; applySettings(); saveSettings(); });
   lyricRainbowToggle?.addEventListener('click', () => { appSettings.lyricRainbow = !appSettings.lyricRainbow; refreshLyric(); });
 
+  // 全局主菜单炫彩文字：开关（设置/均衡器/转码/顶栏弹窗文字的炫彩渐变流光）
+  const glowToggle = document.getElementById('set-glow-toggle');
+  const refreshGlowText = () => {
+    if (glowToggle) {
+      glowToggle.classList.toggle('active', appSettings.glowText);
+      glowToggle.textContent = appSettings.glowText ? '开启' : '关闭';
+    }
+    applySettings(); saveSettings();
+  };
+  glowToggle?.addEventListener('click', () => { appSettings.glowText = !appSettings.glowText; refreshGlowText(); });
+
   // 恢复默认
   document.getElementById('set-reset')?.addEventListener('click', () => {
     appSettings = { ...SETTINGS_DEFAULT };
-    refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode(); refreshAppTitle(); refreshMark();
-    refreshCoverRot(); refreshLyric();
+    refreshBlur(); refreshFrost(); refreshTranscode(); refreshAppTitle(); refreshMark();
+    refreshCoverRot(); refreshLyric(); refreshGlowText(); refreshBtnVis(); refreshFxSpeed();
     if (typeof showToast === 'function') showToast('已恢复默认外观');
   });
 
@@ -2420,7 +2484,7 @@ function bindSettingsEvents() {
     refreshDevSeg();
   }
 
-  refreshBlur(); refreshFrost(); refreshColors(); refreshTranscode(); refreshCoverRot(); refreshLyric();
+  refreshBlur(); refreshFrost(); refreshTranscode(); refreshCoverRot(); refreshLyric(); refreshGlowText(); refreshBtnVis(); refreshFxSpeed();
 }
 
 function initSettings() {
@@ -3293,3 +3357,295 @@ console.log('[Dir] 目录管理模块已加载，已保存', savedDirs.length, '
   });
 })();
 
+// ==============================
+// 通知栏 / 锁屏媒体控制（MediaSession + MediaStyle，Android 专有）
+// 原生 MediaSessionPlugin 在通知栏与锁屏画出：封面 / 上一首·播放暂停·下一首 / 进度，
+// 并把播放·暂停·上下首·拖动进度动作转发回此处。非 Android（无插件）全部 no-op。
+// ==============================
+function mediaPlugin() {
+  return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaSessionPlugin;
+}
+
+// 节流状态（mArtworkSent=上次发给原生的封面 b64，''=未发/已清除）
+let mPushLast = 0;
+let mPushTimer = null;
+let mArtworkSent = '';
+// 封面缓存：同一封面 src 不重复 fetch+FileReader+base64（每秒 pushMediaNow 会反复调用，缓存可避免后台抢 CPU）
+let mArtKey = '';
+let mArtB64 = '';
+
+function mediaCurTrack() {
+  if (state && state.currentIndex >= 0 && state.playlist[state.currentIndex]) {
+    return state.playlist[state.currentIndex];
+  }
+  return null;
+}
+
+// 封面 base64：无论来源（dataURL / blob / http(s) / saf.local）统一经 <img>+canvas
+// 缩到最长边 512px 的 JPEG，彻底避免超大原图 base64 超 1.5MB 上限被丢弃 → 通知栏/锁屏无封面。
+// 同一封面 src 结果缓存于 mArtKey/mArtB64——只有切歌/换封面才重新抓取。
+async function mediaArtworkData() {
+  try {
+    if (!coverImg) return null;
+    const src = coverImg.src || '';
+    if (!src) return null;
+    if (src === mArtKey) return mArtB64 || null;   // 封面没变：直接返回缓存
+    mArtKey = src;
+    mArtB64 = '';
+    let objUrl = src;
+    let needsRevoke = false;
+    if (/^(https?:|saf\.local|blob:)/i.test(src)) {
+      const resp = await fetch(src);
+      if (!resp || !resp.ok) return null;
+      const blob = await resp.blob();
+      objUrl = URL.createObjectURL(blob);
+      needsRevoke = true;
+    }
+    const dataUrl = await new Promise((resolve) => {
+      const img = new Image();
+      const timer = setTimeout(() => { img.src = ''; resolve(null); }, 8000);
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (!w || !h) { resolve(null); return; }
+          const max = 512;
+          const sc = Math.min(1, max / Math.max(w, h));
+          const cw = Math.max(1, Math.round(w * sc));
+          const ch = Math.max(1, Math.round(h * sc));
+          const cv = document.createElement('canvas');
+          cv.width = cw; cv.height = ch;
+          const ctx = cv.getContext('2d');
+          if (ctx) { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cw, ch); ctx.drawImage(img, 0, 0, cw, ch); }
+          resolve(cv.toDataURL('image/jpeg', 0.86));
+        } catch (_) { resolve(null); }
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(null); };
+      img.src = objUrl;
+    });
+    if (needsRevoke && objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} }
+    if (!dataUrl) return null;
+    const m = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i);
+    if (!m) return null;
+    const b64 = m[2];
+    if (b64.length > 800000) return null; // 512 JPEG 实际远小于此，仅兜底防异常
+    mArtB64 = b64;
+    return b64;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function pushMediaNow() {
+  const p = mediaPlugin();
+  if (!p) return;
+  const track = mediaCurTrack();
+  if (!track || !audio) {
+    p.hide().catch(() => {});
+    return;
+  }
+  const title = track.name || (trackTitle && trackTitle.textContent) || '';
+  let artist = track.artist || (trackArtist && trackArtist.textContent) || '';
+  if (artist === '--') artist = '';
+  const playing = !audio.paused;
+  const position = isFinite(audio.currentTime) ? audio.currentTime : 0;
+  const duration = (isFinite(audio.duration) && audio.duration > 0)
+    ? audio.duration
+    : (track.duration || 0);
+  const speed = audio.playbackRate || 1;
+  const canPrev = state.playlist.length > 1;
+  const canNext = state.playlist.length > 1;
+  // 通知栏两行歌词：当前句 + 下一句（无歌词/关闭歌词给空串）
+  let lyric1 = '', lyric2 = '';
+  try {
+    if (appSettings.lyricEnabled && track._lrc && track._lrc.length) {
+      const idx = lyrIndexForTime(track._lrc, audio.currentTime || 0);
+      lyric1 = (track._lrc[idx] && track._lrc[idx].text) || '';
+      lyric2 = (idx + 1 < track._lrc.length) ? (track._lrc[idx + 1].text || '') : '';
+    }
+  } catch (_) { lyric1 = ''; lyric2 = ''; }
+  let artwork = null;
+  try { artwork = await mediaArtworkData(); } catch (_) { artwork = null; }
+  // artwork 传输协议（v2.21 优化，避免每秒跨桥传 1.5MB base64 + 原生重复解码）：
+  //  - 封面没变（== 上次已发）→ 不传该键 → 原生沿用上次位图
+  //  - 封面从有到无 → 传 "" 显式清空
+  //  - 封面变化 → 传新 base64
+  let artPayload;
+  if (artwork !== null && artwork !== mArtworkSent) {
+    artPayload = artwork;
+    mArtworkSent = artwork;
+  } else if (artwork === null && mArtworkSent !== '') {
+    artPayload = '';
+    mArtworkSent = '';
+  }
+  p.update({
+    title: title,
+    artist: artist,
+    playing: playing,
+    position: position,
+    duration: duration,
+    speed: speed,
+    canPrev: canPrev,
+    canNext: canNext,
+    artwork: artPayload,
+    lyric1: lyric1,
+    lyric2: lyric2,
+  }).catch(() => {});
+}
+
+function scheduleMediaPush(immediate) {
+  const now = Date.now();
+  if (immediate || (now - mPushLast) > 500) {
+    mPushLast = now;
+    pushMediaNow();
+  } else if (!mPushTimer) {
+    mPushTimer = setTimeout(() => {
+      mPushTimer = null;
+      mPushLast = Date.now();
+      pushMediaNow();
+    }, 500 - (now - mPushLast));
+  }
+}
+
+// 动作回调：原生 MediaSession 回调 → 转发到此
+if (mediaPlugin()) {
+  try {
+    mediaPlugin().addListener('action', (e) => {
+      try {
+        const a = e && e.action;
+        if (a === 'play') {
+          audio.play().catch(() => {});
+        } else if (a === 'pause') {
+          audio.pause();
+        } else if (a === 'next') {
+          playNext();
+        } else if (a === 'prev') {
+          playPrev();
+        } else if (a === 'seek') {
+          if (isFinite(e.position)) audio.currentTime = Math.max(0, e.position);
+        } else if (a === 'stop') {
+          audio.pause();
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+}
+
+// 播放事件 → 立即刷新通知
+if (audio) {
+  // v2.22.11：'seeked' 一并即时推送——暂停态点锁屏进度区时轮询已跳过，
+  // 若只靠 500ms 轮询补刷新会显示陈旧进度；seek 完成后立即刷一次即可。
+  ['play', 'pause', 'ended', 'seeked', 'loadedmetadata', 'durationchange'].forEach((ev) => {
+    audio.addEventListener(ev, () => scheduleMediaPush(true));
+  });
+}
+
+// 常驻 500ms 轮询（低开销）：歌词按半秒推送，通知栏/锁屏歌词跟唱不滞后；非 Android 直接 no-op。
+// v2.22.11：暂停时跳过轮询——进度/歌词均已静止，继续每 500ms 重建重推同内容通知，
+// 会在锁屏触发"收起→再展开"闪烁（OriginOS 对锁屏通知内容刷新敏感）；
+// 播放/暂停/切歌等状态切换已由上方事件监听即时各推一次，暂停态不会漏更新。
+setInterval(() => {
+  if (!mediaPlugin()) return;
+  if (audio && audio.paused) return;
+  pushMediaNow();
+}, 500);
+
+// 首次推送（若已有曲目）
+if (mediaPlugin()) {
+  try { pushMediaNow(); } catch (_) {}
+}
+
+
+// ================================================================
+// v2.21 自绘炫彩下拉（透明玻璃）
+// 目的：Android WebView 点原生 <select> 会弹系统「白底黑字」选项框，很丑。
+// 做法：原生 select.fx-select 留在 DOM（CSS display:none）继续承载 value /
+// change 语义，此处只加外观层；选项点击 → 回写 selectedIndex + 派发 change，
+// 现有监听（转码参数联动、EQ 预设）全部照常触发，无需改动。
+// 面板挂到 document.body（弹窗有 backdrop-filter，会成为 fixed 的包含块并裁剪），
+// 用 getBoundingClientRect 定位，滚动/缩放/点外部即收起。
+// ================================================================
+function initGlowSelects() {
+  document.querySelectorAll('select.fx-select').forEach((sel) => {
+    if (sel.dataset.glowReady) return;
+    sel.dataset.glowReady = '1';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'glow-select';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'glow-select-btn';
+    const label = document.createElement('span');
+    label.className = 'glow-select-label';
+    const caret = document.createElement('span');
+    caret.className = 'glow-select-caret';
+    btn.appendChild(label);
+    btn.appendChild(caret);
+    const panel = document.createElement('div');
+    panel.className = 'glow-select-panel';
+
+    const syncLabel = () => {
+      const o = sel.options[sel.selectedIndex];
+      label.textContent = o ? o.text : '';
+      btn.title = o ? o.text : '';
+    };
+    const close = () => {
+      panel.classList.remove('open');
+      panel.style.display = 'none';
+      document.removeEventListener('pointerdown', onDoc);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+    const onDoc = (e) => {
+      const el = e.target;
+      if (wrap.contains(el) || panel.contains(el)) return;  // 面板内点击交给选项自身处理
+      close();
+    };
+    const buildItems = () => {
+      panel.innerHTML = '';
+      Array.prototype.forEach.call(sel.options, (o, i) => {
+        const it = document.createElement('div');
+        it.className = 'glow-select-item' + (i === sel.selectedIndex ? ' sel' : '');
+        it.textContent = o.text;
+        it.addEventListener('click', () => {
+          sel.selectedIndex = i;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          syncLabel();
+          close();
+        });
+        panel.appendChild(it);
+      });
+    };
+    const open = () => {
+      buildItems();
+      const r = btn.getBoundingClientRect();
+      panel.style.display = 'block';
+      panel.style.minWidth = Math.max(200, Math.round(r.width)) + 'px';
+      panel.style.left = Math.max(8, Math.min(r.left, window.innerWidth - panel.offsetWidth - 8)) + 'px';
+      panel.style.top = (r.bottom + 6) + 'px';
+      const ph = panel.offsetHeight;
+      if (r.bottom + 6 + ph > window.innerHeight) panel.style.top = Math.max(8, r.top - ph - 6) + 'px';
+      panel.classList.add('open');
+      setTimeout(() => {
+        document.addEventListener('pointerdown', onDoc);
+        window.addEventListener('resize', close);
+        window.addEventListener('scroll', close, true);
+      }, 0);
+    };
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (panel.classList.contains('open')) close(); else open();
+    });
+    // 程序赋值（若有）与联动同样走 change → 同步按钮文字与选中高亮
+    sel.addEventListener('change', () => { syncLabel(); buildItems(); });
+
+    syncLabel();
+    buildItems();
+    wrap.appendChild(btn);
+    sel.parentNode.insertBefore(wrap, sel.nextSibling);
+    document.body.appendChild(panel);
+  });
+}
+
+try { initGlowSelects(); } catch (e) { console.warn('[glow-select] 初始化失败:', e); }

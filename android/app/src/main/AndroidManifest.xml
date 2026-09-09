@@ -24,6 +24,21 @@
 
         </activity>
 
+        <!-- v2.22.6：播放时把媒体通知升格为前台(mediaPlayback)，让系统识别本应用为媒体应用 -->
+        <service
+            android:name=".MediaControlService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- v2.22.7：媒体浏览器服务——标准媒体应用注册，系统锁屏/原子随身听经 MediaBrowser 取会话 -->
+        <service
+            android:name=".MusicMediaBrowserService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -33,9 +48,24 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+        <receiver
+            android:name=".MediaActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.musicplayer.app.MEDIA" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
 
+    <!-- Capacitor 官方模板标配：WebView 网络栈 / 在线资源必需（本地 https://localhost 服务虽不依赖，但不可缺省） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 读取媒体图片：当前代码全部走 SAF / ACTION_GET_CONTENT（免权限），暂未实际使用，保留以防后续直接读 MediaStore -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Android 13+ 通知栏 / 锁屏媒体控制必需（缺少则系统静默丢弃媒体通知） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v2.22.6：前台服务（Android 14+ 按类型强制要求 mediaPlayback 权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 </manifest>

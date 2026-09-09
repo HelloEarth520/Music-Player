@@ -1,10 +1,11 @@
 /* =========================================================
-   MusicPlayer · 在线体验版 Demo（仅界面展示，但交互真实可用）
-   对接 www/ 真实布局：
-   - 多文件夹 / 每文件夹 7 首 / 按全局序号命名
-   - 播放·暂停·上一首·下一首·进度拖动 模拟真实行为
-   - 均衡器滑块实时驱动可视化
-   - 模糊 / 毛玻璃 / 文字颜色 设置真正生效（仅视觉）
+   MusicPlayer · 在线体验版 Demo（界面展示 + 可上传本地音频真实试听）
+   对接 www/ 真实布局（v2.22 同步）：
+   - 多文件夹 / 每文件夹 7 首 / 按全局序号命名（纯演示数据）
+   - 播放·暂停·上一首·下一首·进度拖动 / 歌词 / EQ 可视化 均真实可用
+   - 「打开文件 / 打开文件夹」= 选择本地音频 → 浏览器真实播放（audio 直出）
+   - 模糊 / 毛玻璃 / 全局炫彩文字 / 动画速度 / 顶栏按钮显隐 设置生效（仅视觉）
+   - 封面旋转由 JS rAF 按 fxSpeed 累加角度（非 CSS 动画）
    ========================================================= */
 (function () {
   "use strict";
@@ -151,6 +152,15 @@
   // v2.16 状态：封面旋转 / 歌词显示
   let coverRotOn = true, lyricEnabled = true;
 
+  /* ---------- v2.22 真实本地音频引擎（<audio id="audio-engine">，index.html 已存在） ---------- */
+  const audioEl = document.getElementById("audio-engine");
+  let curRealUrl = null;      // 当前真实文件的 objectURL（切歌/停止时 revoke）
+  let curMode = "repeat";     // repeatOne | repeat | shuffle（与模式按钮一致）
+  let localFolderIdx = -1;    // 「本地文件（上传）」目录在 FOLDERS 中的下标（-1=未建）
+
+  // 封面 JS 旋转状态（v2.22.1：rAF 按时间差累加角度，速度跟随 fxSpeed）
+  let coverAngle = 0, coverRaf = 0, coverLastTs = 0;
+
   /* ---------- 音乐目录（切换文件夹同步刷新歌曲） ---------- */
   const dl = $("#dir-list");
   function renderDirs() {
@@ -193,12 +203,11 @@
 
   /* ---------- v2.16 歌词区：全量滚动列表（mock 驱动，行为对齐 www/player.js 引擎） ----------
      当前句始终居中放大、上下收敛视差；可滑动/滚轮浏览，停止 5 秒自动回位；
-     当前行右侧「— ▶」悬浮钮 → 弹出「从此句播放」气泡 → curTime 定位到该句（模拟 seek） */
+     浏览歌词时右侧「— ▶」悬浮钮出现，点击直接从此句播放（curTime 定位，模拟 seek）；回到跟随后按钮消失 */
   const lyricSection = $("#lyric-section");
   const lyricViewport = $("#lyric-viewport");
   const lyricList = $("#lyric-list");
   const lyricJumpBtn = $("#lyric-jump");
-  const lyricJumpPop = $("#lyric-jump-pop");
 
   const FAKE_LYRICS = [
     "晚风穿过整座城市的灯光",
@@ -227,7 +236,6 @@
   let lyrReturnTimer = null;  // 5s 自动回位定时器
   let lyrAnim = null;         // 回位动画 rAF
   let lyrPointerDrag = null;  // { id, startY, startOffset, moved }
-  let lyrPopOpen = false;     // 「从此句播放」气泡是否展开
   let lyrVisA = -1, lyrVisB = -1;
   let lyrTransient = false;   // true=拖拽/滚轮/回位动画进行中 → 行内禁 transition
   let lyrTransientTimer = null;
@@ -429,7 +437,7 @@
     lyrBrowseIdx = -1;  // 进入浏览即重置落点句
     lyrCancelAutoReturn();
     lyrCancelAnim();
-    lyrHideJumpUi();
+    lyrUpdateJumpUi();
     lyrTransient = true;
   }
   function lyrFireAutoReturn() {
@@ -522,7 +530,7 @@
       lyrCancelAnim();
     } else {
       lyrFollowing = false;
-      lyrHideJumpUi();
+      lyrUpdateJumpUi();
     }
     const factor = (e.deltaMode === 1) ? 16 : 1;   // Firefox 行模式 → px
     lyrOffset = lyrClampOffset(lyrOffset - (e.deltaY * factor)); // 滚轮向下 = 看后面的歌词
@@ -540,38 +548,21 @@
     e.preventDefault();
   }
 
-  // ---- 悬浮控件：jump 按钮 + 「从此句播放」气泡 ----
+  // ---- 悬浮控件：jump 按钮（v2.21.0：去掉「从此句播放」气泡，点击直接跳句） ----
   function lyrHideJumpUi() {
     if (lyricJumpBtn) lyricJumpBtn.classList.remove("visible");
-    if (lyricJumpPop) { lyricJumpPop.classList.add("hidden"); lyrPopOpen = false; }
   }
   function lyrUpdateJumpUi() {
     if (!lyricSection || lyricSection.classList.contains("hidden") || !lyricEnabled) {
       lyrHideJumpUi();
       return;
     }
-    const busy = !!lyrPointerDrag || lyrTransient;
-    const hasLine = lyrFollowing ? (lyrActive >= 0) : (lyrLineAtCenter() >= 0);
-    const visible = !!(lyrItems && lyrItems.length > 0 && !busy && hasLine);
+    // v2.21.0 可见性反转：滑动/浏览歌词时显示；回到跟随播放并静止回位后隐藏
+    const visible = !!(lyrItems && lyrItems.length > 0 && !lyrFollowing);
     if (lyricJumpBtn) lyricJumpBtn.classList.toggle("visible", visible);
-    if (!visible && lyricJumpPop) { lyricJumpPop.classList.add("hidden"); lyrPopOpen = false; }
   }
-  function lyrOnJumpBtnClick(e) {
-    e.stopPropagation();
-    if (!lyricJumpPop) return;
-    if (lyrPopOpen) {
-      lyrPopOpen = false;
-      lyricJumpPop.classList.add("hidden");
-      if (!lyrFollowing) lyrScheduleAutoReturn(); // 关闭气泡后恢复 5s 自动回位
-    } else {
-      lyrPopOpen = true;
-      lyricJumpPop.classList.remove("hidden");
-      lyrCancelAutoReturn(); // 气泡开着不自动回位，避免“看着中心句却跳回播放句”的竞态
-    }
-  }
-  function lyrOnJumpPopClick() {
-    if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
-    lyrPopOpen = false;
+  function lyrOnJumpClick(e) {
+    if (e) e.stopPropagation();
     const lrc = lyrLrc;
     if (!lrc || !lrc.length) return;
     // 跟随态 → 播放句；浏览态 → 落点句（吸附后的视口中心句，优先于实时重算，防自动回位竞态）
@@ -605,23 +596,13 @@
   if (lyricViewport) {
     lyricViewport.addEventListener("wheel", lyrOnWheel, { passive: false });
   }
-  if (lyricJumpBtn) lyricJumpBtn.addEventListener("click", lyrOnJumpBtnClick);
-  if (lyricJumpPop) lyricJumpPop.addEventListener("click", lyrOnJumpPopClick);
-  document.addEventListener("pointerdown", (e) => {
-    if (!lyrPopOpen) return;
-    const t = e.target;
-    if (t && t.closest && (t.closest("#lyric-jump-pop") || t.closest("#lyric-jump"))) return;
-    lyrPopOpen = false;
-    if (lyricJumpPop) lyricJumpPop.classList.add("hidden");
-    if (!lyrFollowing) lyrScheduleAutoReturn(); // 点击别处关闭气泡：浏览态恢复自动回位
-  });
+  if (lyricJumpBtn) lyricJumpBtn.addEventListener("click", lyrOnJumpClick);
 
   // 隐藏歌词区并清空引擎状态（开关关闭 / 无歌词时）
   function resetDemoLyrics() {
     lyrCancelAutoReturn();
     lyrCancelAnim();
     lyrPointerDrag = null;
-    lyrPopOpen = false;
     lyrBrowseIdx = -1;
     if (lyrTransientTimer) { clearTimeout(lyrTransientTimer); lyrTransientTimer = null; }
     lyrTransient = false;
@@ -756,8 +737,10 @@
   }
 
   function selectTrack(idx) {
+    stopRealAudio();               // 先停掉上一首真实播放（mock 由下方逻辑接管）
     currentTrackIdx = idx;
-    const tr = FOLDERS[currentFolderIdx].tracks[idx];
+    const tr = currentTrack();
+    if (!tr) return;
     $("#track-title").textContent = tr.title;
     $("#track-artist").textContent = tr.artist;
     $("#track-format").textContent = tr.format;
@@ -767,21 +750,96 @@
     updateActiveItem();
     renderLyrics();
     updateCoverArt();
+    // 若正处于「播放中」语义：真实曲目 → 真实播放；演示曲目 → 恢复 mock 推进
+    if (isPlaying) {
+      if (tr.real) { stopMockTimer(); playRealTrack(tr); } else startMockTimer();
+    }
   }
 
-  function setPlaying(p) {
+  function currentTrack() {
+    const folder = FOLDERS[currentFolderIdx];
+    return (folder && folder.tracks && folder.tracks[currentTrackIdx]) || null;
+  }
+  function fmtDur(sec) {
+    if (!isFinite(sec) || sec <= 0) return "--:--";
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return m + ":" + String(s).padStart(2, "0");
+  }
+  // 真实文件引擎：停止当前真实播放并撤销 objectURL（切歌/换目录时调用）
+  function stopRealAudio() {
+    if (!audioEl) return;
+    try { audioEl.pause(); } catch (_) {}
+    if (curRealUrl) { try { URL.revokeObjectURL(curRealUrl); } catch (_) {} curRealUrl = null; }
+    try { audioEl.removeAttribute("src"); audioEl.load(); } catch (_) {}
+  }
+  // 启动真实播放（tr.real=true 的曲目；objectURL 懒创建）
+  function playRealTrack(tr) {
+    if (!audioEl || !tr || !tr.real) return;
+    stopRealAudio();
+    try { curRealUrl = URL.createObjectURL(tr.file); } catch (_) {}
+    audioEl.loop = curMode === "repeatOne";
+    audioEl.volume = Math.max(0, Math.min(1, parseFloat($("#volume").value) || 0.8));
+    audioEl.src = curRealUrl;
+    const pr = audioEl.play();
+    if (pr && pr.catch) pr.catch(() => { uiSetPlaying(false); toast("无法播放该文件：浏览器可能不支持此音频格式"); });
+  }
+  // 模拟推进定时器（仅演示曲目）
+  function startMockTimer() {
+    if (playTimer) clearInterval(playTimer);
+    playTimer = setInterval(tickPlay, 1000);
+  }
+  function stopMockTimer() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  }
+
+  // 封面 JS 旋转 + 卡片跑马灯联动（v2.22 语义与 www/player.js 相同）
+  function coverTick(ts) {
+    coverRaf = requestAnimationFrame(coverTick);
+    if (coverLastTs) {
+      const secPerTurn = (typeof fxSpeed === "number" && fxSpeed > 0) ? fxSpeed : 10;
+      coverAngle = (coverAngle + ((ts - coverLastTs) / 1000) * (360 / secPerTurn)) % 360;
+      const coverEl = $("#cover");
+      if (coverEl) coverEl.style.transform = "rotate(" + coverAngle + "deg)";
+    }
+    coverLastTs = ts;
+  }
+  function startCoverSpin() {
+    const coverEl = $("#cover");
+    if (coverEl) { coverEl.classList.remove("spinning-paused"); coverEl.classList.add("spinning"); }
+    document.documentElement.style.setProperty("--ring-run", "running");
+    if (!coverRaf) { coverLastTs = 0; coverRaf = requestAnimationFrame(coverTick); }
+  }
+  function pauseCoverSpin() {
+    const coverEl = $("#cover");
+    if (coverEl) { coverEl.classList.remove("spinning"); coverEl.classList.add("spinning-paused"); }
+    document.documentElement.style.setProperty("--ring-run", "paused");
+    if (coverRaf) { cancelAnimationFrame(coverRaf); coverRaf = 0; }
+  }
+  // 播放态视觉统一入口（图标 / 封面旋转 / 跑马灯）
+  function uiSetPlaying(p) {
     isPlaying = p;
     $("#play-icon").style.display = p ? "none" : "block";
     $("#pause-icon").style.display = p ? "block" : "none";
-    const cover = $("#cover");
-    cover.classList.toggle("spinning", p);
-    cover.classList.toggle("spinning-paused", !p);
-    if (p) {
-      if (playTimer) clearInterval(playTimer);
-      playTimer = setInterval(tickPlay, 1000);
-    } else {
-      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    if (p) startCoverSpin(); else pauseCoverSpin();
+  }
+  function setPlaying(p) {
+    const tr = currentTrack();
+    const real = !!(tr && tr.real);
+    if (real && audioEl) {
+      // 真实音频：由 audio 事件驱动（play/pause/timeupdate/ended），不走 mock 计时器
+      stopMockTimer();
+      uiSetPlaying(p);
+      if (p) {
+        const pr = audioEl.play();
+        if (pr && pr.catch) pr.catch(() => { uiSetPlaying(false); toast("无法播放该文件：浏览器可能不支持此音频格式"); });
+      } else {
+        audioEl.pause();
+      }
+      return;
     }
+    // 演示曲目：mock 计时推进
+    uiSetPlaying(p);
+    if (p) startMockTimer(); else stopMockTimer();
   }
 
   function tickPlay() {
@@ -792,8 +850,30 @@
     syncLyrics();
   }
 
+  // 切下一首：按当前播放模式（curMode）分派 —— v2.22.13 修复：此前永远顺序 +1，
+  // 随机(curMode=shuffle)从不生效。语义对齐 www/player.js 引擎。
   function nextTrack() {
-    const n = FOLDERS[currentFolderIdx].tracks.length;
+    const folder = FOLDERS[currentFolderIdx];
+    if (!folder) return;
+    const n = folder.tracks.length;
+    if (!n) return;
+    if (curMode === "repeatOne") {
+      // 单曲循环：重播当前曲目（真实曲目另有 audio.loop 兜底，此处覆盖 mock 与手动下一首）
+      selectTrack(currentTrackIdx);
+      return;
+    }
+    if (curMode === "shuffle") {
+      // 随机播放：从不与当前曲目重复的剩余曲目中随机选一首；仅 1 首时重播
+      if (n > 1) {
+        let idx;
+        do { idx = Math.floor(Math.random() * n); } while (idx === currentTrackIdx);
+        selectTrack(idx);
+      } else {
+        selectTrack(currentTrackIdx);
+      }
+      return;
+    }
+    // 列表循环（默认）：顺序下一首，播到末尾回第一首
     selectTrack((currentTrackIdx + 1) % n);
   }
   function prevTrack() {
@@ -809,29 +889,38 @@
     b.addEventListener("click", () => {
       $$(".mode-group .mode-btn").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
-      const m = b.dataset.mode;
-      const name = { repeatOne: "单曲循环", repeat: "列表循环", shuffle: "随机播放" }[m];
+      curMode = b.dataset.mode;
+      if (audioEl) audioEl.loop = (curMode === "repeatOne");
+      const name = { repeatOne: "单曲循环", repeat: "列表循环", shuffle: "随机播放" }[curMode];
       toast("播放模式：" + name);
     })
   );
 
-  /* ---------- 音量 ---------- */
+  /* ---------- 音量（真实文件播放时同步 audio.volume） ---------- */
   const vol = $("#volume");
   const volVal = $("#vol-value");
-  vol.addEventListener("input", () => (volVal.textContent = Math.round(vol.value * 100) + "%"));
+  const setVolUI = () => {
+    volVal.textContent = Math.round(vol.value * 100) + "%";
+    if (audioEl) audioEl.volume = Math.max(0, Math.min(1, parseFloat(vol.value) || 0));
+  };
+  vol.addEventListener("input", setVolUI);
   $("#vol-icon").addEventListener("click", () => {
-    const nv = vol.value > 0 ? 0 : 0.8;
-    vol.value = nv; volVal.textContent = Math.round(nv * 100) + "%";
+    vol.value = vol.value > 0 ? 0 : 0.8; setVolUI();
   });
 
-  /* ---------- 进度条拖动 ---------- */
+  /* ---------- 进度条拖动（真实曲目写回 audio.currentTime） ---------- */
   const wrap = $("#progress-bar-wrap");
   let dragging = false;
   function seek(e) {
     const rect = wrap.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const tr = FOLDERS[currentFolderIdx].tracks[currentTrackIdx];
-    curTime = ratio * tr.dur;
+    const tr = currentTrack();
+    if (!tr) return;
+    const dur = (tr.real && audioEl && isFinite(audioEl.duration)) ? audioEl.duration : (tr.dur || 0);
+    curTime = ratio * dur;
+    if (tr.real && audioEl && isFinite(audioEl.duration)) {
+      try { audioEl.currentTime = curTime; } catch (_) {}
+    }
     updateProgress();
     syncLyrics();
   }
@@ -844,11 +933,73 @@
   wrap.addEventListener("pointerup", () => { dragging = false; });
   wrap.addEventListener("pointercancel", () => { dragging = false; });
 
-  /* ---------- 装饰性（无法真实实现）按钮 ---------- */
+  /* ---------- v2.22 真实本地音频：事件驱动（objectURL 由 audio-engine 播放） ---------- */
+  function isRealNow() { const t = currentTrack(); return !!(t && t.real); }
+  function syncRealMeta() {
+    const t = currentTrack();
+    if (!t || !t.real || !audioEl) return;
+    const d = audioEl.duration;
+    if (isFinite(d) && d > 0) { t.dur = d; t.durStr = fmtDur(d); $("#total-time").textContent = t.durStr; }
+  }
+  if (audioEl) {
+    audioEl.addEventListener("play", () => { if (isRealNow()) uiSetPlaying(true); });
+    audioEl.addEventListener("pause", () => { if (isRealNow() && !audioEl.ended) uiSetPlaying(false); });
+    audioEl.addEventListener("timeupdate", () => {
+      if (!isRealNow()) return;
+      curTime = audioEl.currentTime || 0;
+      syncRealMeta();
+      updateProgress();
+      syncLyrics();
+    });
+    audioEl.addEventListener("loadedmetadata", () => { if (isRealNow()) { syncRealMeta(); updateProgress(); } });
+    audioEl.addEventListener("ended", () => { if (isRealNow()) nextTrack(); });
+    audioEl.addEventListener("error", () => { if (isRealNow()) toast("音频加载/解码失败：浏览器可能不支持该格式"); });
+  }
+
+  /* ---------- v2.22 真实本地文件上传（浏览器直出播放；原“不支持”改为可用） ---------- */
   $("#btn-add-dir").addEventListener("click", () => toast("体验版不支持添加目录"));
-  ["#btn-open-file", "#btn-open-folder"].forEach((s) =>
-    $(s).addEventListener("click", () => toast("体验版不支持选择文件"))
-  );
+  const fileInput = $("#file-input");
+  const folderInput = $("#folder-input");
+  function ensureLocalFolder() {
+    if (localFolderIdx < 0) {
+      localFolderIdx = FOLDERS.length;
+      FOLDERS.push({ name: "/本地文件（上传）", tracks: [], local: true });
+    }
+    return localFolderIdx;
+  }
+  function isAudioFile(f) {
+    if (!f) return false;
+    if (f.type && f.type.indexOf("audio") === 0) return true;
+    return /\.(mp3|flac|wav|ogg|aac|m4a|opus|webm|wma|ape|aiff|alac|mp4|m4b)$/i.test(f.name || "");
+  }
+  function addLocalFiles(fileList) {
+    const files = Array.prototype.filter.call(fileList || [], isAudioFile);
+    if (!files.length) { toast("未找到可播放的音频文件"); return; }
+    const idx = ensureLocalFolder();
+    const folder = FOLDERS[idx];
+    files.forEach((f) => {
+      const m = /^(.*)\.([^.]+)$/.exec(f.name || "未命名");
+      folder.tracks.push({
+        real: true, file: f,
+        title: m ? m[1] : (f.name || "未命名"),
+        artist: "本地文件",
+        format: m ? m[2].toUpperCase() : "AUDIO",
+        dur: 0, durStr: "--:--",
+      });
+    });
+    currentFolderIdx = idx;
+    renderDirs();
+    renderPlaylist();
+    selectTrack(folder.tracks.length - 1);   // 定位到最后添加的一首
+    setPlaying(true);                         // 立即真实播放（浏览器直出）
+    toast("已添加 " + files.length + " 个本地音频，开始真实试听");
+  }
+  if (fileInput) fileInput.addEventListener("change", (e) => { addLocalFiles(e.target.files); e.target.value = ""; });
+  if (folderInput) folderInput.addEventListener("change", (e) => { addLocalFiles(e.target.files); e.target.value = ""; });
+  const openFileBtn = $("#btn-open-file");
+  if (openFileBtn) openFileBtn.addEventListener("click", () => { if (fileInput) fileInput.click(); });
+  const openFolderBtn = $("#btn-open-folder");
+  if (openFolderBtn) openFolderBtn.addEventListener("click", () => { if (folderInput) folderInput.click(); });
 
   /* ---------- 面板开关 ---------- */
   function openModal(sel) { $(sel).classList.remove("hidden"); }
@@ -950,8 +1101,10 @@
       if (e.target === solidOverlay) solidOverlay.classList.add("hidden");
     });
 
-  /* ---------- 设置：模糊 / 毛玻璃 / 文字颜色（视觉真实生效） ---------- */
+  /* ---------- 设置：模糊 / 毛玻璃 / 全局炫彩文字 / 动画速度 / 顶栏按钮显隐（视觉真实生效） ---------- */
   let blurOn = true, frostOn = true, blurVal = 10, frostVal = 8;
+  let glowOn = true, fxSpeed = 10;              // 全局炫彩文字 / 全局动画速度（秒/圈）
+  let eqBtnShown = true, showFileBtn = true, showFolderBtn = true, transcodeOn = true; // 顶栏按钮显隐
   function applyBlur() {
     const px = (blurOn ? blurVal : 0);
     document.documentElement.style.setProperty("--glass-blur", px + "px");
@@ -960,6 +1113,28 @@
   }
   function applyFrost() {
     document.documentElement.style.setProperty("--glass-frost", frostOn ? frostVal / 100 : 0);
+  }
+  // 全局炫彩文字：<html>.fx-off 关闭 → CSS 逐项回退纯色（范围=全部文字 + 主界面图标）
+  function applyGlow() {
+    document.documentElement.classList.toggle("fx-off", !glowOn);
+  }
+  // 全局动画速度：炫彩流光 / 封面旋转 / 卡片描边跑马灯共用 --fx-speed（秒/圈）
+  function applyFxSpeed() {
+    document.documentElement.style.setProperty("--fx-speed", (fxSpeed || 10) + "s");
+  }
+  // 顶栏按钮显隐：均衡器 / 打开文件 / 打开文件夹 / 转码（v2.22 语义=display 控制）
+  function applyToolbar() {
+    const set = (id, on) => { const el = $(id); if (el) el.style.display = on ? "" : "none"; };
+    set("#btn-equalizer", eqBtnShown);
+    set("#btn-open-file", showFileBtn);
+    set("#btn-open-folder", showFolderBtn);
+    set("#btn-transcode", transcodeOn);
+  }
+  // 便捷：同步 set-toggle 开关外观（active + 开启/关闭 文案）
+  function refreshToggleUi(el, on) {
+    if (!el) return;
+    el.classList.toggle("active", !!on);
+    el.textContent = on ? "开启" : "关闭";
   }
 
   /* ---------- 应用标题：自定义顶栏文字 + 音符标志 ---------- */
@@ -977,86 +1152,101 @@
   const appTitleInput = $("#set-app-title");
   if (appTitleInput) appTitleInput.addEventListener("input", function () {
     appTitle = this.value;
-    const logoText = $("#logo-text");
-    const t = (appTitle || '').trim();
-    if (logoText) { logoText.textContent = t; logoText.style.display = t ? '' : 'none'; }
+    applyAppTitle();
   });
   const markToggle = $("#set-logo-mark-toggle");
   if (markToggle) markToggle.addEventListener("click", function () {
     showLogoMark = !showLogoMark;
-    this.classList.toggle("active", showLogoMark);
-    this.textContent = showLogoMark ? "开启" : "关闭";
-    const logoMark = $("#logo-mark");
-    if (logoMark) logoMark.style.display = showLogoMark ? '' : 'none';
+    refreshToggleUi(this, showLogoMark);
+    applyAppTitle();
   });
   applyAppTitle();
 
-  const COLOR_DEFAULTS = {
-    titlebar: "#f1f0ff", playlist: "#f1f0ff", main: "#f1f0ff",
-    transcode: "#f1f0ff", equalizer: "#f1f0ff",
-  };
-  Object.keys(COLOR_DEFAULTS).forEach((key) => {
-    const inp = $("#set-color-" + key);
-    if (inp) inp.addEventListener("input", (e) =>
-      document.documentElement.style.setProperty("--text-" + key, e.target.value)
-    );
-  });
-  $("#set-blur-toggle").addEventListener("click", function () {
-    blurOn = !blurOn; this.classList.toggle("active", blurOn);
-    this.textContent = blurOn ? "开启" : "关闭"; applyBlur();
-  });
-  $("#set-frost-toggle").addEventListener("click", function () {
-    frostOn = !frostOn; this.classList.toggle("active", frostOn);
-    this.textContent = frostOn ? "开启" : "关闭"; applyFrost();
-  });
-  $("#set-blur-slider").addEventListener("input", function () {
-    blurVal = +this.value; $("#set-blur-val").textContent = blurVal + "px"; applyBlur();
-  });
-  $("#set-frost-slider").addEventListener("input", function () {
-    frostVal = +this.value; $("#set-frost-val").textContent = frostVal + "%"; applyFrost();
-  });
+  /* ---------- 模糊 / 毛玻璃 开关与滑块 ---------- */
+  const blurToggle = $("#set-blur-toggle");
+  const frostToggle = $("#set-frost-toggle");
+  const blurSlider = $("#set-blur-slider");
+  const frostSlider = $("#set-frost-slider");
+  if (blurToggle) blurToggle.addEventListener("click", function () { blurOn = !blurOn; refreshToggleUi(this, blurOn); applyBlur(); });
+  if (frostToggle) frostToggle.addEventListener("click", function () { frostOn = !frostOn; refreshToggleUi(this, frostOn); applyFrost(); });
+  if (blurSlider) blurSlider.addEventListener("input", function () { blurVal = +this.value; $("#set-blur-val").textContent = blurVal + "px"; applyBlur(); });
+  if (frostSlider) frostSlider.addEventListener("input", function () { frostVal = +this.value; $("#set-frost-val").textContent = frostVal + "%"; applyFrost(); });
   $("#set-frost-minus").addEventListener("click", () => {
     frostVal = Math.max(0, frostVal - 1);
-    $("#set-frost-slider").value = frostVal; $("#set-frost-val").textContent = frostVal + "%"; applyFrost();
+    if (frostSlider) frostSlider.value = frostVal;
+    $("#set-frost-val").textContent = frostVal + "%"; applyFrost();
   });
   $("#set-frost-plus").addEventListener("click", () => {
     frostVal = Math.min(100, frostVal + 1);
-    $("#set-frost-slider").value = frostVal; $("#set-frost-val").textContent = frostVal + "%"; applyFrost();
-  });
-  $("#set-color-reset").addEventListener("click", () => {
-    Object.keys(COLOR_DEFAULTS).forEach((k) => {
-      const inp = $("#set-color-" + k);
-      if (inp) inp.value = COLOR_DEFAULTS[k];
-      document.documentElement.style.removeProperty("--text-" + k);
-    });
-    toast("文字颜色已恢复默认");
-  });
-  $("#set-reset").addEventListener("click", () => {
-    blurOn = true; frostOn = true; blurVal = 10; frostVal = 8;
-    appTitle = 'MusicPlayer-一切皆可自定'; showLogoMark = true;
-    $("#set-blur-toggle").classList.add("active"); $("#set-blur-toggle").textContent = "开启";
-    $("#set-frost-toggle").classList.add("active"); $("#set-frost-toggle").textContent = "开启";
-    $("#set-blur-slider").value = 10; $("#set-blur-val").textContent = "10px";
-    $("#set-frost-slider").value = 8; $("#set-frost-val").textContent = "8%";
-    const ati = $("#set-app-title"); if (ati) ati.value = 'MusicPlayer-一切皆可自定';
-    const mt = $("#set-logo-mark-toggle"); if (mt) { mt.classList.add("active"); mt.textContent = "开启"; }
-    Object.keys(COLOR_DEFAULTS).forEach((k) => {
-      const inp = $("#set-color-" + k);
-      if (inp) inp.value = COLOR_DEFAULTS[k];
-      document.documentElement.style.removeProperty("--text-" + k);
-    });
-    applyBlur(); applyFrost(); applyAppTitle();
-    toast("外观已恢复默认");
+    if (frostSlider) frostSlider.value = frostVal;
+    $("#set-frost-val").textContent = frostVal + "%"; applyFrost();
   });
 
-  /* ---------- v2.16 设置项：转码开关 / 封面旋转 / 歌词（仅视觉切换） ---------- */
+  /* ---------- v2.22 全局炫彩文字开关 ---------- */
+  const glowToggle = $("#set-glow-toggle");
+  if (glowToggle) glowToggle.addEventListener("click", function () { glowOn = !glowOn; refreshToggleUi(this, glowOn); applyGlow(); });
+
+  /* ---------- v2.22 动画速度滑块（3–60 秒/圈） ---------- */
+  const fxSpeedSlider = $("#set-fx-speed-slider");
+  const fxSpeedVal = $("#set-fx-speed-val");
+  if (fxSpeedSlider) fxSpeedSlider.addEventListener("input", function () {
+    fxSpeed = parseInt(this.value, 10) || 10;
+    if (fxSpeedVal) fxSpeedVal.textContent = fxSpeed + "s";
+    applyFxSpeed();
+  });
+
+  /* ---------- v2.22 顶栏按钮显隐三开关 ---------- */
+  const eqBtnToggle = $("#set-eq-btn-toggle");
+  const showFileToggle = $("#set-show-file-toggle");
+  const showFolderToggle = $("#set-show-folder-toggle");
+  if (eqBtnToggle) eqBtnToggle.addEventListener("click", function () { eqBtnShown = !eqBtnShown; refreshToggleUi(this, eqBtnShown); applyToolbar(); });
+  if (showFileToggle) showFileToggle.addEventListener("click", function () { showFileBtn = !showFileBtn; refreshToggleUi(this, showFileBtn); applyToolbar(); });
+  if (showFolderToggle) showFolderToggle.addEventListener("click", function () { showFolderBtn = !showFolderBtn; refreshToggleUi(this, showFolderBtn); applyToolbar(); });
+
+  /* ---------- 恢复默认（含全部新增设置项） ---------- */
+  function resetAppearance() {
+    blurOn = true; frostOn = true; blurVal = 10; frostVal = 8;
+    glowOn = true; fxSpeed = 10;
+    eqBtnShown = true; showFileBtn = true; showFolderBtn = true; transcodeOn = true;
+    appTitle = 'MusicPlayer-一切皆可自定'; showLogoMark = true;
+    coverRotOn = true; lyricEnabled = true;
+    const ati = $("#set-app-title"); if (ati) ati.value = 'MusicPlayer-一切皆可自定';
+    refreshToggleUi(blurToggle, true); refreshToggleUi(frostToggle, true);
+    if (blurSlider) blurSlider.value = 10;
+    $("#set-blur-val").textContent = "10px";
+    if (frostSlider) frostSlider.value = 8;
+    $("#set-frost-val").textContent = "8%";
+    refreshToggleUi(glowToggle, true);
+    if (fxSpeedSlider) fxSpeedSlider.value = 10;
+    if (fxSpeedVal) fxSpeedVal.textContent = "10s";
+    refreshToggleUi(eqBtnToggle, true); refreshToggleUi(showFileToggle, true); refreshToggleUi(showFolderToggle, true);
+    refreshToggleUi($("#set-transcode-toggle"), true);
+    refreshToggleUi($("#set-cover-rot-toggle"), true); refreshToggleUi($("#set-lyric-toggle"), true);
+    refreshToggleUi($("#set-lyric-rainbow-toggle"), false);
+    refreshToggleUi($("#set-logo-mark-toggle"), true);
+    document.documentElement.style.setProperty("--lyric-size", "15px");
+    document.documentElement.style.setProperty("--lyric-color", "#ffffff");
+    const sec = $("#lyric-section"); if (sec) sec.classList.toggle("rainbow", false);
+    const lc = $("#set-lyric-color"); if (lc) lc.value = "#ffffff";
+    const lsz = $("#set-lyric-size"); if (lsz) lsz.value = 15;
+    lyricFontSize = 15;
+    applyBlur(); applyFrost(); applyGlow(); applyFxSpeed(); applyToolbar(); applyAppTitle();
+    toast("外观已恢复默认");
+  }
+  $("#set-reset").addEventListener("click", resetAppearance);
+
+  /* ---------- v2.22 设置项：转码开关（顶栏显隐）/ 封面旋转 / 歌词（仅视觉切换） ---------- */
+  // v2.22：转码开关语义 = 顶栏按钮显隐（开启显示、关闭隐藏，不再灰显禁用）
   const transcodeToggle = $("#set-transcode-toggle");
+  function refreshTranscodeBtn() {
+    if (!transcodeToggle) return;
+    refreshToggleUi(transcodeToggle, !!transcodeOn);
+    applyToolbar();
+  }
   if (transcodeToggle) transcodeToggle.addEventListener("click", function () {
-    const on = this.classList.toggle("active");
-    this.textContent = on ? "开启" : "关闭";
-    const btn = $("#btn-transcode");
-    if (btn) { btn.disabled = !on; btn.classList.toggle("tc-disabled", !on); }
-    toast(on ? "转码入口已开启（演示）" : "转码入口已关闭");
+    transcodeOn = !transcodeOn;
+    refreshTranscodeBtn();
+    toast(transcodeOn ? "顶栏「转码」按钮已显示" : "顶栏「转码」按钮已隐藏");
   });
   const coverRotToggle = $("#set-cover-rot-toggle");
   if (coverRotToggle) coverRotToggle.addEventListener("click", function () {
@@ -1170,11 +1360,15 @@
   setPlaying(false);
   applyBlur();
   applyFrost();
-  // 演示版默认开启转码入口（www 版默认关闭，此处覆盖以便展示）
-  const tcBtn = $("#btn-transcode");
-  if (tcBtn) { tcBtn.disabled = false; tcBtn.classList.remove("tc-disabled"); }
-  const tcTg = $("#set-transcode-toggle");
-  if (tcTg) { tcTg.classList.add("active"); tcTg.textContent = "开启"; }
+  applyGlow();
+  applyFxSpeed();
+  applyToolbar();
+  applyAppTitle();
+  // 演示版默认显示顶栏「转码 / 均衡器」按钮（www 版二者默认隐藏；此处与历史演示一致便于展示）
+  refreshTranscodeBtn();
+  refreshToggleUi($("#set-eq-btn-toggle"), eqBtnShown);
+  refreshToggleUi($("#set-cover-rot-toggle"), coverRotOn);
+  refreshToggleUi($("#set-lyric-toggle"), lyricEnabled);
   // 歌词初始样式变量（与 www 播放器默认一致）
   document.documentElement.style.setProperty("--lyric-size", "15px");
   document.documentElement.style.setProperty("--lyric-color", "#ffffff");
@@ -1233,4 +1427,91 @@
   document.addEventListener("keydown", (e) => {
     if (e.code === "Escape" || e.key === "Escape") drawerClose();
   });
+  /* ---------- v2.21.0 自绘玻璃炫彩下拉：接管 select.fx-select 的展开层 ----------
+     原生 select 保留在 DOM（隐藏）继续承载 value/change 语义，现有监听不改；
+     面板挂到 document.body，避免被弹窗的 backdrop-filter 裁剪。 */
+  function initGlowSelects() {
+    Array.prototype.slice.call(document.querySelectorAll("select.fx-select")).forEach((sel) => {
+      if (sel.dataset.glowReady) return;
+      sel.dataset.glowReady = "1";
+
+      const wrap = document.createElement("div");
+      wrap.className = "glow-select";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "glow-select-btn";
+      const label = document.createElement("span");
+      label.className = "glow-select-label";
+      const caret = document.createElement("span");
+      caret.className = "glow-select-caret";
+      btn.appendChild(label);
+      btn.appendChild(caret);
+      const panel = document.createElement("div");
+      panel.className = "glow-select-panel";
+
+      const syncLabel = () => {
+        const o = sel.options[sel.selectedIndex];
+        label.textContent = o ? o.text : "";
+        btn.title = o ? o.text : "";
+      };
+      const close = () => {
+        panel.classList.remove("open");
+        panel.style.display = "none";
+        document.removeEventListener("pointerdown", onDoc);
+        window.removeEventListener("resize", close);
+        window.removeEventListener("scroll", close, true);
+      };
+      const onDoc = (e) => {
+        const el = e.target;
+        if (wrap.contains(el) || panel.contains(el)) return;
+        close();
+      };
+      const buildItems = () => {
+        panel.innerHTML = "";
+        Array.prototype.forEach.call(sel.options, (o, i) => {
+          const it = document.createElement("div");
+          it.className = "glow-select-item" + (i === sel.selectedIndex ? " sel" : "");
+          it.textContent = o.text;
+          it.addEventListener("click", () => {
+            sel.selectedIndex = i;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            syncLabel();
+            close();
+          });
+          panel.appendChild(it);
+        });
+      };
+      const open = () => {
+        buildItems();
+        const r = btn.getBoundingClientRect();
+        panel.style.display = "block";
+        panel.style.minWidth = Math.max(200, Math.round(r.width)) + "px";
+        panel.style.left = Math.max(8, Math.min(r.left, window.innerWidth - panel.offsetWidth - 8)) + "px";
+        panel.style.top = (r.bottom + 6) + "px";
+        const ph = panel.offsetHeight;
+        if (r.bottom + 6 + ph > window.innerHeight) panel.style.top = Math.max(8, r.top - ph - 6) + "px";
+        panel.classList.add("open");
+        setTimeout(() => {
+          document.addEventListener("pointerdown", onDoc);
+          window.addEventListener("resize", close);
+          window.addEventListener("scroll", close, true);
+        }, 0);
+      };
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (panel.classList.contains("open")) close(); else open();
+      });
+      sel.addEventListener("change", () => { syncLabel(); buildItems(); });
+
+      syncLabel();
+      buildItems();
+      wrap.appendChild(btn);
+      sel.parentNode.insertBefore(wrap, sel.nextSibling);
+      document.body.appendChild(panel);
+    });
+  }
+
+  try { initGlowSelects(); } catch (e) { console.warn("[glow-select] 初始化失败:", e); }
+
 })();
