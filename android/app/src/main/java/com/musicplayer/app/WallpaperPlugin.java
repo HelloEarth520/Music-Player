@@ -48,6 +48,8 @@ public class WallpaperPlugin extends Plugin {
             final int r = Math.max(0, Math.min(150, radius));
             getActivity().runOnUiThread(() -> {
                 try {
+                    // v2.22.1 回退：不再做「摘除→下一帧挂回」的强制 relayout——实机在墙纸层会闪一帧。
+                    // 恢复 v2.21 的单次 setAttributes（前台调模糊需切后台一次才完全生效，但不闪烁）。
                     WindowManager.LayoutParams lp = getActivity().getWindow().getAttributes();
                     if (r > 0) {
                         lp.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;

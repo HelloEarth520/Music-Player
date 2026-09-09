@@ -19,6 +19,8 @@
   /* 玻璃外观（由设置面板控制，player.js 写入） */
   --glass-blur: 10px;     /* 模糊半径 */
   --glass-frost: 0.08;   /* 毛玻璃不透明度 0~1 */
+  --fx-speed: 10s;       /* 全局动画速度：秒/圈（炫彩流光+封面旋转+卡片描边跑马灯） */
+  --ring-run: paused;    /* 当前播放卡片描边跑马灯播放态：running/paused（JS 维护） */
   /* 动态背景主色（由 player.js updateBgColor 设置） */
   --bg-c1: #6d28d9;
   --bg-c2: #2563eb;
@@ -324,7 +326,7 @@ html, body {
     0 18px 50px rgba(0,0,0,0.35),
     inset 0 1px 1px rgba(255,255,255,0.55),
     inset 0 -14px 30px rgba(255,255,255,0.10);
-  transition: transform 0.4s, box-shadow 0.4s;
+  transition: box-shadow 0.4s;
   overflow: hidden;
 }
 
@@ -361,13 +363,8 @@ html, body {
 /* 高光保持在封面图之上，保留液态玻璃质感 */
 .cover::before { z-index: 2; }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-.cover.spinning { animation: spin 10s linear infinite; }
-.cover.spinning-paused { animation: spin 10s linear infinite; animation-play-state: paused; }
+/* 封面旋转 v2.22.1 起由 JS 实时角度驱动（rAF 按 fxSpeed 累加），不再用 CSS 动画 */
+/* .cover.spinning / .spinning-paused 类仍由 JS 维护（用于跑马灯播放态联动），无动画定义 */
 
 
 
@@ -491,145 +488,6 @@ html, body {
   min-width: 34px;
   text-align: left;
 }
-
-/* ============================
-   Lyrics（全量滚动列表：当前句始终居中放大，
-   上下逐行缩小变淡的收敛视差，可上下滑动浏览）
-   ============================ */
-.lyric-section {
-  position: relative;
-  width: 100%;
-  max-width: 520px;
-  /* 高度跟随字号自适应（约 6.2 个行高），裁剪交给内部 viewport */
-  height: calc(var(--lyric-size, 15px) * 1.45 * 6.2);
-  min-height: 120px;
-  overflow: visible;
-  user-select: none;
-  flex-shrink: 0;            /* 父级 flex column 下不被压缩，高度才能随字号自适应 */
-}
-.lyric-section.hidden { display: none; }
-
-/* 可视窗口：撑满 lyric-section 负责裁切与手势（不可加 backdrop-filter） */
-.lyric-viewport {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  touch-action: none;       /* 触屏滑动由 JS 接管，避免与系统手势冲突 */
-}
-
-/* 歌词列表：整体用 translateY 平移使当前句对齐视口中心 */
-.lyric-list {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  will-change: transform;
-}
-
-/* 统一行盒：单行高 = 字号 ×1.45；初始 opacity 0（JS 只给可视行设 opacity/transform） */
-.lyric-item {
-  height: calc(var(--lyric-size, 15px) * 1.45);
-  line-height: calc(var(--lyric-size, 15px) * 1.45);
-  font-size: var(--lyric-size, 15px);
-  color: var(--lyric-color, #ffffff);
-  text-align: center;
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;     /* 非当前行限 1 行省略，防高度超容 */
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity .25s ease, transform .25s ease;
-  transform-origin: center center;
-}
-
-/* 当前播放句：允许显示 2 行 + 光晕；是否真展开 2 行由 JS 实测行高决定 */
-.lyric-item.active {
-  -webkit-line-clamp: 2;
-  text-shadow: 0 0 16px rgba(255,255,255,0.35);
-}
-
-/* 炫彩流逝：当前行文字渐变色流动 */
-.lyric-section.rainbow .lyric-item.active {
-  background: linear-gradient(90deg, #ff5f6d, #ffc371, #40e0d0, #7f7fd5, #ff5f6d);
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: none;
-  animation: lyric-flow 3.5s linear infinite;
-}
-@keyframes lyric-flow {
-  to { background-position: -200% center; }
-}
-
-/* 当前行右侧悬浮：破折号 + 播放三角（液态玻璃小圆钮，默认隐藏由 JS 控制） */
-.lyric-jump {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  box-sizing: border-box;
-  width: 34px;
-  height: 26px;
-  border-radius: 13px;
-  background: rgba(255,255,255,0.10);
-  backdrop-filter: blur(14px) saturate(1.5);
-  -webkit-backdrop-filter: blur(14px) saturate(1.5);
-  border: 1px solid rgba(255,255,255,0.28);
-  color: #fff;
-  box-shadow:
-    0 8px 22px rgba(0,0,0,0.30),
-    inset 0 1px 1px rgba(255,255,255,0.50);
-  cursor: pointer;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity .2s ease, visibility .2s ease;
-}
-.lyric-jump.visible {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-.lyric-jump-dash {
-  font-size: 13px;
-  letter-spacing: 1px;
-  line-height: 1;
-}
-.lyric-jump-icon {
-  display: block;
-  width: 12px;
-  height: 12px;
-}
-
-/* 「从此句播放」扁椭圆小气泡（位于按钮左侧，跟随按钮显示/隐藏） */
-.lyric-jump-pop {
-  position: absolute;
-  right: 46px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 18px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.14);
-  backdrop-filter: blur(14px) saturate(1.5);
-  -webkit-backdrop-filter: blur(14px) saturate(1.5);
-  border: 1px solid rgba(255,255,255,0.28);
-  color: #fff;
-  font-size: 13px;
-  white-space: nowrap;
-  box-shadow:
-    0 4px 18px rgba(0,0,0,0.25),
-    inset 0 1px 1px rgba(255,255,255,0.30);
-  cursor: pointer;
-}
-.lyric-jump-pop.hidden { display: none; }
 
 /* ============================
    Control Buttons (SVG icons, no emoji)
@@ -2250,10 +2108,6 @@ html, body {
 
   .player-main { padding: 12px 16px; gap: 12px; }
   .player-main-right { gap: 12px; }
-  .lyric-section {
-    height: calc(var(--lyric-size, 15px) * 1.45 * 4.4);
-    min-height: 0;
-  }
   .cover { width: clamp(96px, 26vh, 150px); height: clamp(96px, 26vh, 150px); }
   .format-hint { display: none; }
 }
@@ -2405,7 +2259,6 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   html[data-layout="phone"] .cover-wrapper { flex: 1 1 33%; display: flex; align-items: center; justify-content: center; min-width: 0; }
   html[data-layout="phone"] .player-main-right { flex: 2 1 66%; height: 100%; overflow-y: auto; justify-content: flex-start; }
   html[data-layout="phone"] .format-hint { display: none; }
-  html[data-layout="phone"] .lyric-section { height: calc(var(--lyric-size, 15px) * 1.45 * 4.4); min-height: 0; }
   html[data-layout="phone"] .cover { width: clamp(110px, 30vh, 160px); height: clamp(110px, 30vh, 160px); }
 }
 
@@ -2424,7 +2277,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   html[data-layout="tablet"] .cover { width: clamp(140px, 30vh, 200px); height: clamp(140px, 30vh, 200px); }
 }
 
-/* ===== 平板 tablet：横屏 → 标题+时间，行式双栏更宽松（6 行歌词） ===== */
+/* ===== 平板 tablet：横屏 → 标题+时间，行式双栏更宽松 ===== */
 @media (orientation: landscape) and (pointer: coarse) {
   html[data-layout="tablet"] #logo-text { display: inline !important; }
   html[data-layout="tablet"] #header-clock { display: inline !important; }
@@ -2434,7 +2287,6 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   html[data-layout="tablet"] .cover-wrapper { flex: 1 1 33%; display: flex; align-items: center; justify-content: center; min-width: 0; }
   html[data-layout="tablet"] .player-main-right { flex: 2 1 66%; }
   html[data-layout="tablet"] .cover { width: clamp(120px, 32vh, 210px); height: clamp(120px, 32vh, 210px); }
-  html[data-layout="tablet"] .lyric-section { height: calc(var(--lyric-size, 15px) * 1.45 * 6); min-height: 0; }
 }
 
 /* ============================
@@ -2473,4 +2325,288 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
     border: 1px solid var(--card-border);
   }
   html[data-layout="tablet"] .header-actions .lbl { display: inline; }
+}
+
+/* ============================================================
+   v2.21+ 炫彩流光文字（全局主菜单）
+   痛点：毛玻璃浅色背景上白字看不清。改为「透明底 + 高饱和炫彩渐变 + 缓慢流动」，
+   自带高对比，浅底深底都能读。
+   开关：设置「全局主菜单炫彩文字 (Glow Text)」关闭时 JS 给 <html> 加 .fx-off → 逐项回退纯色。
+   范围（v2.22.3 扩展）：顶栏 / 弹窗标题 / 组标题 / 字段行标签 / 主界面文字 / 主操作按钮。
+   刻意不作用于（单独控制或系统/引导界面）：
+     - 歌词区（有自己的「炫彩流逝」开关）
+     - 首开向导三页（协议声明 / 数据目录选择 / 设备形态选择）→ 保持素色清晰
+     - 设置里的说明性小字（.settings-hint）
+   ============================================================ */
+.settings-title,
+.settings-group-title,
+.transcode-title,
+.equalizer-title,
+.tc-label,
+.tc-row label,
+.settings-row .set-label,
+.settings-row .settings-row-label,
+.titlebar .lbl,
+.logo #logo-text,
+#header-clock,
+.dir-header,
+.playlist-header,
+.track-count,
+.track-title,
+.track-artist,
+.track-format,
+.progress-section .time,
+.vol-value,
+.format-hint,
+.settings-row .set-val,
+.playlist-item-title {
+  color: transparent;
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #fbbf24, #22d3ee);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+}
+@keyframes fx-flow {
+  0%   { background-position: 0% center; }
+  100% { background-position: 300% center; }
+}
+
+/* 主操作按钮：本身是实心渐变胶囊 + 白字（对比度本来就够）。
+   若套 background-clip:text 会把胶囊底一起裁掉 → 只让「底色」炫彩流动，文字保持白色。 */
+#btn-load-ffmpeg,
+.btn-start-transcode,
+.btn-batch-export {
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #fbbf24, #22d3ee);
+  background-size: 300% auto;
+  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+}
+
+/* ---- 开关关闭（html.fx-off）：逐项还原各自原色 / 原渐变底 ---- */
+html.fx-off .settings-title,
+html.fx-off .transcode-title,
+html.fx-off .equalizer-title,
+html.fx-off .tc-label,
+html.fx-off .tc-row label,
+html.fx-off .settings-row .settings-row-label,
+html.fx-off .titlebar .lbl {
+  color: currentColor;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+html.fx-off .settings-group-title {
+  color: var(--text);
+  background: none;
+  -webkit-text-fill-color: var(--text);
+  animation: none;
+}
+html.fx-off .settings-row .set-label {
+  color: var(--text-muted);
+  background: none;
+  -webkit-text-fill-color: var(--text-muted);
+  animation: none;
+}
+/* v2.22.3 新增覆盖项的回退：统一回到各自继承色，不残留透明渐变 */
+html.fx-off .logo #logo-text,
+html.fx-off #header-clock,
+html.fx-off .dir-header,
+html.fx-off .playlist-header,
+html.fx-off .track-count,
+html.fx-off .track-title,
+html.fx-off .track-artist,
+html.fx-off .track-format,
+html.fx-off .progress-section .time,
+html.fx-off .vol-value,
+html.fx-off .format-hint,
+html.fx-off .settings-row .set-val,
+html.fx-off .playlist-item-title {
+  color: currentColor;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+.fx-off .titlebar .lbl { color: var(--text-titlebar, #f1f0ff); -webkit-text-fill-color: currentColor; animation: none; }
+html.fx-off #btn-load-ffmpeg,
+html.fx-off .btn-start-transcode {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  background-size: auto;
+  animation: none;
+}
+html.fx-off .btn-batch-export {
+  background: linear-gradient(135deg, #10b981, #059669);
+  background-size: auto;
+  animation: none;
+}
+
+/* ============================================================
+   v2.22.4 图标炫彩：主界面默认白/浅色 SVG 图标上彩虹渐变
+   （播放条 prev/playpause/next 为 fill 型；模式按钮/设置/抽屉为 stroke 型。
+    渐变静态多彩，流光动效仍由跑马灯环/文字承担；关闭炫彩时回退各自原色。）
+   ============================================================ */
+.controls .ctrl-btn svg polygon,
+.controls .ctrl-btn svg rect,
+.controls .ctrl-btn svg path {
+  fill: url(#fx-ic-grad);
+}
+.mode-group .mode-btn svg polyline,
+.mode-group .mode-btn svg path,
+.mode-group .mode-btn svg line {
+  stroke: url(#fx-ic-grad);
+}
+.mode-group .mode-btn svg circle {
+  fill: url(#fx-ic-grad);
+  stroke: none;
+}
+.btn-settings-header svg circle,
+.btn-settings-header svg path,
+.btn-drawer svg line {
+  stroke: url(#fx-ic-grad);
+}
+html.fx-off .controls .ctrl-btn svg polygon,
+html.fx-off .controls .ctrl-btn svg rect,
+html.fx-off .controls .ctrl-btn svg path,
+html.fx-off .mode-group .mode-btn svg circle {
+  fill: currentColor;
+}
+html.fx-off .mode-group .mode-btn svg polyline,
+html.fx-off .mode-group .mode-btn svg path,
+html.fx-off .mode-group .mode-btn svg line,
+html.fx-off .btn-settings-header svg circle,
+html.fx-off .btn-settings-header svg path,
+html.fx-off .btn-drawer svg line {
+  stroke: currentColor;
+}
+
+/* ============================================================
+   v2.21 自绘「玻璃炫彩」下拉（替代 Android WebView 原生白底黑字选项框）
+   原生 <select class="fx-select"> 仍留在 DOM（display:none）继续承载
+   value / change 语义；JS 生成外观层 .glow-select 并把点击回写原生 select。
+   面板用 position:fixed + JS 定位，避免被 modal 的 overflow-y:auto 裁切。
+   ============================================================ */
+select.fx-select { display: none !important; }
+
+.glow-select { position: relative; display: inline-block; min-width: 160px; vertical-align: middle; }
+.tc-row .glow-select { flex: 1; min-width: 0; }
+.eq-controls-row .glow-select { margin-left: auto; min-width: 180px; }
+
+.glow-select-btn {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.28);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.35);
+  font-size: 0.82rem;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.glow-select-btn:hover { border-color: var(--accent); background: rgba(255,255,255,0.16); }
+
+/* 按钮文字单独一层 span：外层要玻璃底，文字要渐变 clip，两者不能同元素 */
+.glow-select-label {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: transparent;
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #fbbf24, #22d3ee);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+}
+html.fx-off .glow-select-label {
+  color: #f1f0ff;
+  background: none;
+  -webkit-text-fill-color: #f1f0ff;
+  animation: none;
+}
+.glow-select-caret {
+  flex: 0 0 auto;
+  width: 0; height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid rgba(255,255,255,0.78);
+}
+
+.glow-select-panel {
+  position: fixed;
+  z-index: 999;
+  min-width: 200px;
+  max-height: 46vh;
+  overflow-y: auto;
+  background: rgba(16,12,40,0.72);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  padding: 6px;
+  display: none;
+}
+.glow-select-panel.open { display: block; }
+.glow-select-panel::-webkit-scrollbar { width: 8px; }
+.glow-select-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 6px; }
+.glow-select-panel::-webkit-scrollbar-track { background: transparent; }
+
+.glow-select-item {
+  padding: 9px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  color: transparent;
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #fbbf24, #22d3ee);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+}
+/* 选中 / 悬浮：整块亮渐变底 + 深色字（亮底上深字最清晰） */
+.glow-select-item:hover,
+.glow-select-item.sel {
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6);
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: #0b0a1a;
+  -webkit-text-fill-color: #0b0a1a;
+  animation: none;
+}
+html.fx-off .glow-select-item {
+  color: #e6e2ff;
+  background: none;
+  -webkit-text-fill-color: #e6e2ff;
+  animation: none;
+}
+html.fx-off .glow-select-item:hover,
+html.fx-off .glow-select-item.sel {
+  background: rgba(255,255,255,0.16);
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+/* ================= v2.22 播放列表当前播放卡片：细描边炫彩跑马灯 =================
+   仅 .playlist-item.active：用 conic-gradient + mask 只保留 ~2px 细环，
+   环内渐变色相沿边框旋转；速度由 --fx-speed（全局速度滑块）统一控制，
+   播放时 --ring-run=running（JS startCoverSpin/pauseCoverSpin 维护）。 */
+@property --ring-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes ring-run { to { --ring-a: 360deg; } }
+.playlist-item.active { position: relative; border-color: transparent; }
+.playlist-item.active::after {
+  content: ''; position: absolute; inset: -2px; border-radius: 15px; padding: 2px;
+  background: conic-gradient(from var(--ring-a, 0deg),
+    #22d3ee 0deg, #a78bfa 90deg, #f472b6 180deg, #fbbf24 270deg, #22d3ee 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: ring-run var(--fx-speed, 10s) linear infinite;
+  animation-play-state: var(--ring-run, paused);
+  pointer-events: none;
 }

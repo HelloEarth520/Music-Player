@@ -5,6 +5,8 @@ import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.util.Base64;
@@ -36,6 +38,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * DirectoryPickerPlugin — SAF (Storage Access Framework) 目录选择器
@@ -54,7 +58,11 @@ public class DirectoryPickerPlugin extends Plugin {
     private static final String SAF_HOST = "saf.local";
 
     // 是否已向 Capacitor 本地服务器注册 /saf_audio/* 处理器（只注册一次）
-    private boolean safHandlerRegistered = false;
+    private volatile boolean safHandlerRegistered = false;
+
+    // 大文件流式拷贝的专用后台线程池（单线程串行），避免 70MB+ 文件阻塞 Capacitor 插件主线程
+    private static final ExecutorService SAF_COPY_EXECUTOR = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // 支持的音频扩展名
     private static final Set<String> AUDIO_EXTS = new HashSet<>();
@@ -290,56 +298,71 @@ public class DirectoryPickerPlugin extends Plugin {
                 if (dot > 0) ext = dn.substring(dot);
             }
         }
+        final String fExt = ext;
 
-        InputStream is = null;
-        OutputStream os = null;
-        try {
-            Uri treeUri = Uri.parse(treeUriStr);
-            Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+        // 2026-09-08 修复：整文件流式拷贝（70MB+）原在主线程执行，会阻塞 WebView 主线程
+        // 数秒 → <audio> 媒体管线饿死 → 播放暂停需手动点播放 + 切歌卡顿。改到后台线程执行，
+        // 完成后切回主线程 resolve/reject。
+        SAF_COPY_EXECUTOR.execute(() -> {
+            InputStream is = null;
+            OutputStream os = null;
+            try {
+                Uri treeUri = Uri.parse(treeUriStr);
+                Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
 
-            ContentResolver resolver = getContext().getContentResolver();
-            is = resolver.openInputStream(fileUri);
-            if (is == null) {
-                call.reject("无法打开文件流");
-                return;
+                ContentResolver resolver = getContext().getContentResolver();
+                is = resolver.openInputStream(fileUri);
+                if (is == null) {
+                    rejectOnMain(call, "无法打开文件流");
+                    return;
+                }
+
+                // 用 documentId 的哈希命名，并带上真实扩展名（用于 MIME 嗅探），
+                // 保证同一文件复用同一缓存文件，避免缓存无限膨胀
+                File cacheDir = new File(getContext().getCacheDir(), "saf_audio");
+                if (!cacheDir.exists()) cacheDir.mkdirs();
+                String fileName = "saf_" + Integer.toHexString(documentId.hashCode()) + fExt;
+                File outFile = new File(cacheDir, fileName);
+
+                os = new FileOutputStream(outFile);
+                byte[] chunk = new byte[CHUNK_SIZE];
+                int n;
+                long total = 0;
+                while ((n = is.read(chunk)) != -1) {
+                    os.write(chunk, 0, n);
+                    total += n;
+                }
+                os.flush();
+
+                // 注册虚拟路径处理器（只注册一次），返回 https://saf.local/saf_audio/...
+                ensureSafAudioHandlerRegistered();
+                Bridge bridge = (Bridge) getBridge();
+                String url = bridge.getScheme() + "://" + SAF_HOST + "/saf_audio/" + fileName;
+
+                JSObject ret = new JSObject();
+                ret.put("url", url);
+                ret.put("path", "file://" + outFile.getAbsolutePath());
+                ret.put("size", total);
+                mainHandler.post(() -> {
+                    try { call.resolve(ret); } catch (Exception e) { Log.w(TAG, "resolve failed: " + e.getMessage()); }
+                });
+
+                // 异步清理：缓存超过阈值时删除最旧文件，避免无限占用存储
+                pruneSafCacheIfNeeded(cacheDir);
+            } catch (Exception e) {
+                rejectOnMain(call, "拷贝文件失败: " + e.getMessage());
+            } finally {
+                try { if (is != null) is.close(); } catch (Exception ignore) {}
+                try { if (os != null) os.close(); } catch (Exception ignore) {}
             }
+        });
+    }
 
-            // 用 documentId 的哈希命名，并带上真实扩展名（用于 MIME 嗅探），
-            // 保证同一文件复用同一缓存文件，避免缓存无限膨胀
-            File cacheDir = new File(getContext().getCacheDir(), "saf_audio");
-            if (!cacheDir.exists()) cacheDir.mkdirs();
-            String fileName = "saf_" + Integer.toHexString(documentId.hashCode()) + ext;
-            File outFile = new File(cacheDir, fileName);
-
-            os = new FileOutputStream(outFile);
-            byte[] chunk = new byte[CHUNK_SIZE];
-            int n;
-            long total = 0;
-            while ((n = is.read(chunk)) != -1) {
-                os.write(chunk, 0, n);
-                total += n;
-            }
-            os.flush();
-
-            // 注册虚拟路径处理器（只注册一次），返回 https://saf.local/saf_audio/...
-            ensureSafAudioHandlerRegistered();
-            Bridge bridge = (Bridge) getBridge();
-            String url = bridge.getScheme() + "://" + SAF_HOST + "/saf_audio/" + fileName;
-
-            JSObject ret = new JSObject();
-            ret.put("url", url);
-            ret.put("path", "file://" + outFile.getAbsolutePath());
-            ret.put("size", total);
-            call.resolve(ret);
-
-            // 异步清理：缓存超过阈值时删除最旧文件，避免无限占用存储
-            pruneSafCacheIfNeeded(cacheDir);
-        } catch (Exception e) {
-            call.reject("拷贝文件失败: " + e.getMessage());
-        } finally {
-            try { if (is != null) is.close(); } catch (Exception ignore) {}
-            try { if (os != null) os.close(); } catch (Exception ignore) {}
-        }
+    /** 在主线程安全地 reject（后台线程不能直接调用 call.reject） */
+    private void rejectOnMain(final PluginCall call, final String msg) {
+        mainHandler.post(() -> {
+            try { call.reject(msg); } catch (Exception e) { Log.w(TAG, "reject failed: " + e.getMessage()); }
+        });
     }
 
     /**
