@@ -150,6 +150,11 @@ const VIRTUAL_CONFIG = {
   containerHeight: 0, // 容器高度（动态计算）
 };
 
+// 滚动渲染优化状态（v2.23）
+let playlistRafPending = false;   // rAF 挂起标记：一帧内多次 scroll 只渲染一次
+let playlistScrollTimer = 0;      // scrolling 类复位定时器（滚动停止 120ms 后移除）
+let lastRenderedRange = null;     // 上一次渲染的可见区间 [start, end]；null=失效，需强制重建
+
 // ==============================
 // DOM 引用
 // ==============================
@@ -176,6 +181,9 @@ const modeBtnRepeat    = $('btn-mode-repeat');
 const modeBtnShuffle   = $('btn-mode-shuffle');
 const coverImg      = $('cover-img');
 const coverIcon     = $('cover-icon');
+// 封面外层 wrapper：左右滑切歌的跟手位移加在它上面
+//（.cover 自身的 transform 被 coverTick 每帧写入旋转角度，直接写会被覆盖）
+const coverWrapper  = document.querySelector('.cover-wrapper');
 const lyricSection  = $('lyric-section');
 const lyricViewport = $('lyric-viewport');
 const lyricList     = $('lyric-list');
@@ -283,26 +291,49 @@ function initVirtualScroll() {
   
   // 监听滚动
   playlistEl.addEventListener('scroll', onPlaylistScroll, { passive: true });
-  
-  // 初始渲染
-  renderVisibleItems();
+
+  // 初始渲染（force：容器刚重建，必须整次渲染并刷新区间缓存）
+  renderVisibleItems(true);
 }
 
 function onPlaylistScroll() {
-  renderVisibleItems();
+  // 滚动期禁用卡片过渡/投影：加 scrolling 类，停止 120ms 后移除（重复滚动重置定时器）
+  playlistEl.classList.add('scrolling');
+  if (playlistScrollTimer) clearTimeout(playlistScrollTimer);
+  playlistScrollTimer = setTimeout(() => {
+    playlistScrollTimer = 0;
+    playlistEl.classList.remove('scrolling');
+  }, 120);
+
+  // rAF 节流：把真正的渲染合并到下一帧，一帧内多个 scroll 事件只渲染一次
+  if (playlistRafPending) return;
+  playlistRafPending = true;
+  requestAnimationFrame(() => {
+    playlistRafPending = false;
+    renderVisibleItems();
+  });
 }
 
-function renderVisibleItems() {
+/**
+ * 只渲染可见区域的曲目卡片（虚拟化核心）。
+ * @param {boolean} [force] 强制整次重建。外部语义变化（曲目/目录/折叠切换导致容器重建、
+ *                          窗口 resize）必须传 true；滚动路径不传，区间未变时直接跳过。
+ */
+function renderVisibleItems(force) {
   const container = playlistEl.querySelector('.playlist-scroll-container');
   if (!container) return;
-  
+
   const scrollTop = playlistEl.scrollTop;
   const startIndex = Math.max(0, Math.floor(scrollTop / VIRTUAL_CONFIG.itemHeight) - VIRTUAL_CONFIG.bufferSize);
   const endIndex = Math.min(
     state.playlist.length - 1,
     Math.ceil((scrollTop + VIRTUAL_CONFIG.containerHeight) / VIRTUAL_CONFIG.itemHeight) + VIRTUAL_CONFIG.bufferSize
   );
-  
+
+  // 可见区间与上次完全一致且非强制：跳过整次 innerHTML 重建
+  if (!force && lastRenderedRange && lastRenderedRange[0] === startIndex && lastRenderedRange[1] === endIndex) return;
+  lastRenderedRange = [startIndex, endIndex];
+
   // 只渲染可见区域
   container.innerHTML = '';
   
@@ -1614,6 +1645,70 @@ function pauseCoverSpin() {
 }
 
 // ==============================
+// 封面左右滑切歌（pointer 手势，v2.23）
+// 跟手位移落在 .cover-wrapper（原因见 coverWrapper 声明处注释）；
+// .cover 已有 touch-action:pan-y，横滑交给手势、纵滑交给页面滚动。
+// ==============================
+let coverSwipe = null; // { id, startX, startY, moved }
+
+function coverOnPointerDown(e) {
+  if (!coverWrapper) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (state.playlist.length === 0) return;
+  coverSwipe = { id: e.pointerId, startX: e.clientX, startY: e.clientY, moved: false };
+  if (cover && cover.setPointerCapture) {
+    try { cover.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+}
+function coverOnPointerMove(e) {
+  if (!coverSwipe || e.pointerId !== coverSwipe.id) return;
+  const dx = e.clientX - coverSwipe.startX;
+  const dy = e.clientY - coverSwipe.startY;
+  if (!coverSwipe.moved) {
+    // 纵向位移大于水平位移：放弃手势（不切歌不位移），让给纵向滚动
+    if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 6) {
+      if (cover && cover.releasePointerCapture) {
+        try { cover.releasePointerCapture(coverSwipe.id); } catch (_) {}
+      }
+      coverSwipe = null;
+      return;
+    }
+    if (Math.abs(dx) < 3) return; // 死区
+    coverSwipe.moved = true;      // 手势成立，抑制后续 click 误触
+  }
+  const clamped = Math.max(-40, Math.min(40, dx * 0.3)); // 跟手 30%，上限 ±40px
+  coverWrapper.style.transition = 'none';
+  coverWrapper.style.transform = `translateX(${clamped}px)`;
+}
+function coverEndSwipe(e, allowSwitch) {
+  if (!coverSwipe || !e || e.pointerId !== coverSwipe.id) return;
+  const d = coverSwipe;
+  coverSwipe = null;
+  if (cover && cover.releasePointerCapture) {
+    try { cover.releasePointerCapture(d.id); } catch (_) {}
+  }
+  // 0.2s 过渡回弹到 0
+  coverWrapper.style.transition = 'transform 0.2s ease';
+  coverWrapper.style.transform = 'translateX(0)';
+  setTimeout(() => { if (coverWrapper) coverWrapper.style.transition = ''; }, 220);
+  // pointercancel / 未成立的手势不切歌
+  if (!allowSwitch || !d.moved) return;
+  const dx = e.clientX - d.startX;
+  if (dx < -40)      playNext(); // 向左滑 → 下一首
+  else if (dx > 40)  playPrev(); // 向右滑 → 上一首
+}
+function coverOnPointerUp(e)     { coverEndSwipe(e, true); }
+function coverOnPointerCancel(e) { coverEndSwipe(e, false); }
+
+// 事件绑定（沿用歌词手势范式：down 挂元素、move/up 挂 window；元素不存在时静默跳过）
+if (cover && coverWrapper && window.PointerEvent) {
+  cover.addEventListener('pointerdown', coverOnPointerDown, { passive: false });
+  window.addEventListener('pointermove', coverOnPointerMove, { passive: false });
+  window.addEventListener('pointerup', coverOnPointerUp);
+  window.addEventListener('pointercancel', coverOnPointerCancel);
+}
+
+// ==============================
 // 上一首 / 下一首（切换时触发预加载）
 // ==============================
 function playPrev() {
@@ -1905,7 +2000,7 @@ if (IS_ELECTRON) {
 window.addEventListener('resize', () => {
   VIRTUAL_CONFIG.containerHeight = playlistEl.clientHeight;
   if (state.playlist.length > 0) {
-    renderVisibleItems();
+    renderVisibleItems(true);
   }
   // 窗口尺寸变化：重算歌词几何并重定位（行高/可视高可能已变）
   lyricRefreshGeometry();
@@ -2148,7 +2243,7 @@ function bindEqualizerEvents() {
 // ==============================
 const SETTINGS_KEY = 'musicplayer_appearance';
 const SETTINGS_DEFAULT = {
-  settingsVersion: 3,   // 设置结构版本：3 = 顶栏按钮显隐 + 全局动画速度 + 转码语义改为顶栏显隐（2026-09-08）
+  settingsVersion: 5,   // 设置结构版本：5 = 炫彩分区独立开关 + 自定义颜色（2026-09-10）
   blurOn: true, blurPx: 10,
   frostOn: true, frostPct: 18,
   eqEnabled: false,  // 均衡器开关：默认关闭——开启才创建 AudioContext(WebAudio 接管 audio)；关闭则 audio 直出系统，后台/息屏播放最稳
@@ -2158,7 +2253,9 @@ const SETTINGS_DEFAULT = {
   lyricFontSize: 15,       // 歌词字号 px
   lyricColor: '#ffffff',   // 歌词颜色（默认白色，透明设计）
   lyricRainbow: false,     // 炫彩流逝样式（当前行渐变色流动）
-  glowText: true,          // 炫彩流光文字（设置/均衡器/转码弹窗文字）
+  glowText: true,          // 全局炫彩文字主开关：关→全回退（fx-off）；开→三分区独立控制
+  glowAreas: { header: true, player: true, settings: true },    // 三分区独立开关（主开关开时生效，默认全开）
+  glowColors: { header: '', player: '', settings: '' },         // 三分区自定义颜色（空=回退默认炫彩）
   appTitle: 'MusicPlayer-一切皆可自定',  // 顶栏左上角自定义文字
   showLogoMark: true,       // 是否显示音符 🎵 标志
   colorTitlebar: '#f1f0ff',
@@ -2171,6 +2268,15 @@ const SETTINGS_DEFAULT = {
   showOpenFileBtn: true,  // 顶栏「打开文件」按钮显隐
   showOpenFolderBtn: true,// 顶栏「打开文件夹」按钮显隐
   fxSpeed: 10,            // 全局动画速度：秒/圈（炫彩流光+封面旋转+卡片描边跑马灯共用一个 --fx-speed）
+  // v4：主界面元素显隐（默认全开）
+  showTrackTitle: true,   // 歌名 + 格式行显隐
+  showTrackArtist: true,  // 创作者显隐
+  showProgress: true,     // 进度条显隐
+  showVolume: true,       // 音量条显隐
+  showLyric: true,        // 歌词容器显隐（不改动歌词引擎本身）
+  // v4：布局调节（0 = 用设备默认分档）
+  layoutTitlebarH: 0,     // 顶栏高度 px（>0 时覆盖 --titlebar-h）
+  layoutSidebarW: 0,      // 侧栏宽度 px（>0 时覆盖 --sidebar-w）
 };
 let appSettings = { ...SETTINGS_DEFAULT };
 
@@ -2193,6 +2299,37 @@ function loadSettings() {
         if (typeof appSettings.fxSpeed !== 'number') appSettings.fxSpeed = 10;
         appSettings.transcodeEnabled = true; // 新语义：关闭才隐藏顶栏按钮；引擎仍首次使用懒加载
         appSettings.settingsVersion = 3;
+        saveSettings();
+      }
+      // v4 迁移：主界面元素显隐（默认全开）+ 布局调节（默认 0 = 用设备分档）
+      if (!appSettings.settingsVersion || appSettings.settingsVersion < 4) {
+        if (typeof appSettings.showTrackTitle !== 'boolean') appSettings.showTrackTitle = true;
+        if (typeof appSettings.showTrackArtist !== 'boolean') appSettings.showTrackArtist = true;
+        if (typeof appSettings.showProgress !== 'boolean') appSettings.showProgress = true;
+        if (typeof appSettings.showVolume !== 'boolean') appSettings.showVolume = true;
+        if (typeof appSettings.showLyric !== 'boolean') appSettings.showLyric = true;
+        if (typeof appSettings.layoutTitlebarH !== 'number') appSettings.layoutTitlebarH = 0;
+        if (typeof appSettings.layoutSidebarW !== 'number') appSettings.layoutSidebarW = 0;
+        appSettings.settingsVersion = 4;
+        saveSettings();
+      }
+      // v5 迁移：炫彩分区独立开关 + 自定义颜色（默认全开 / 无自定义色）
+      if (!appSettings.settingsVersion || appSettings.settingsVersion < 5) {
+        if (!appSettings.glowAreas || typeof appSettings.glowAreas !== 'object') {
+          appSettings.glowAreas = { header: true, player: true, settings: true };
+        } else {
+          if (typeof appSettings.glowAreas.header !== 'boolean') appSettings.glowAreas.header = true;
+          if (typeof appSettings.glowAreas.player !== 'boolean') appSettings.glowAreas.player = true;
+          if (typeof appSettings.glowAreas.settings !== 'boolean') appSettings.glowAreas.settings = true;
+        }
+        if (!appSettings.glowColors || typeof appSettings.glowColors !== 'object') {
+          appSettings.glowColors = { header: '', player: '', settings: '' };
+        } else {
+          if (typeof appSettings.glowColors.header !== 'string') appSettings.glowColors.header = '';
+          if (typeof appSettings.glowColors.player !== 'string') appSettings.glowColors.player = '';
+          if (typeof appSettings.glowColors.settings !== 'string') appSettings.glowColors.settings = '';
+        }
+        appSettings.settingsVersion = 5;
         saveSettings();
       }
     }
@@ -2225,13 +2362,52 @@ function applySettings() {
   updateBgVeil();
   applyToolbarButtons();
   applyGlowText();
+  applyMainUiVisibility();
+  applyLayoutVars();
 }
 
-// 全局主菜单炫彩文字：关闭时给 <html> 加 .fx-off，
-// CSS 里对应选择器组逐项回退为各自纯色。
+// v4：主界面元素显隐——在 .player-main-right 上增删 hide-* 类（仅控制显示，不动歌词引擎）
+function applyMainUiVisibility() {
+  const el = document.querySelector('.player-main-right');
+  if (!el) return;
+  el.classList.toggle('hide-title', !appSettings.showTrackTitle);
+  el.classList.toggle('hide-artist', !appSettings.showTrackArtist);
+  el.classList.toggle('hide-progress', !appSettings.showProgress);
+  el.classList.toggle('hide-volume', !appSettings.showVolume);
+  el.classList.toggle('hide-lyric', !appSettings.showLyric);
+}
+
+// v4：布局调节——值 >0 时用内联 CSS 变量覆盖默认分档；=0 时移除内联变量回落设备默认
+function applyLayoutVars() {
+  const root = document.documentElement.style;
+  const th = appSettings.layoutTitlebarH || 0;
+  const sw = appSettings.layoutSidebarW || 0;
+  if (th > 0) root.setProperty('--titlebar-h', th + 'px'); else root.removeProperty('--titlebar-h');
+  if (sw > 0) root.setProperty('--sidebar-w', sw + 'px'); else root.removeProperty('--sidebar-w');
+}
+
+// 全局主菜单炫彩文字：
+// 主开关关 → 给 <html> 加 .fx-off（CSS 旧规则整组回退纯色，保持不变）；
+// 主开关开 → 三分区独立控制（区关=加对应 fx-off-<区> 回退类，其余区保持炫彩）；
+// 各区自定义色非零时写 --fx-color-<区>，空则清除回落 CSS 默认回退色。
 function applyGlowText() {
   const root = document.documentElement;
   root.classList.toggle('fx-off', !appSettings.glowText);
+  if (appSettings.glowText) {
+    root.classList.toggle('fx-off-header', !appSettings.glowAreas.header);
+    root.classList.toggle('fx-off-player', !appSettings.glowAreas.player);
+    root.classList.toggle('fx-off-settings', !appSettings.glowAreas.settings);
+  } else {
+    root.classList.remove('fx-off-header', 'fx-off-player', 'fx-off-settings');
+  }
+  const setColorVar = (area, val) => {
+    const v = (val && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(val)) ? val : '';
+    if (v) root.style.setProperty('--fx-color-' + area, v);
+    else root.style.removeProperty('--fx-color-' + area);
+  };
+  setColorVar('header', appSettings.glowColors.header);
+  setColorVar('player', appSettings.glowColors.player);
+  setColorVar('settings', appSettings.glowColors.settings);
 }
 
 // 顶栏按钮显隐：均衡器 / 打开文件 / 打开文件夹（转码按钮由 applyTranscodeEnabled 管）
@@ -2386,6 +2562,95 @@ function bindSettingsEvents() {
   showFileToggle?.addEventListener('click', () => { appSettings.showOpenFileBtn = !appSettings.showOpenFileBtn; refreshBtnVis(); });
   showFolderToggle?.addEventListener('click', () => { appSettings.showOpenFolderBtn = !appSettings.showOpenFolderBtn; refreshBtnVis(); });
 
+  // v4：主界面元素显隐五开关
+  const uiToggleDefs = [
+    ['set-show-title', 'showTrackTitle'],
+    ['set-show-artist', 'showTrackArtist'],
+    ['set-show-progress', 'showProgress'],
+    ['set-show-volume', 'showVolume'],
+    ['set-show-lyric', 'showLyric'],
+  ];
+  const uiToggles = {};
+  const refreshMainUi = () => {
+    uiToggleDefs.forEach(([id, key]) => {
+      const b = uiToggles[id];
+      if (b) { b.classList.toggle('active', !!appSettings[key]); b.textContent = appSettings[key] ? '开启' : '关闭'; }
+    });
+    applyMainUiVisibility(); saveSettings();
+  };
+  uiToggleDefs.forEach(([id, key]) => {
+    const b = document.getElementById(id);
+    uiToggles[id] = b;
+    b?.addEventListener('click', () => { appSettings[key] = !appSettings[key]; refreshMainUi(); });
+  });
+
+  // v4：布局调节（进入/退出 + 拖拽顶栏/侧栏 + 恢复默认）
+  const appEl = document.querySelector('.app');
+  const btnLayoutEdit = document.getElementById('btn-layout-edit');
+  const layoutTitlebarVal = document.getElementById('layout-titlebar-val');
+  const layoutSidebarVal = document.getElementById('layout-sidebar-val');
+  const resizeHandles = [document.getElementById('resize-top'), document.getElementById('resize-side')].filter(Boolean);
+  const readPx = (name, fallback) => {
+    const n = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  const refreshLayoutVals = () => {
+    if (layoutTitlebarVal) layoutTitlebarVal.textContent = Math.round(readPx('--titlebar-h', 69)) + 'px';
+    if (layoutSidebarVal) layoutSidebarVal.textContent = Math.round(readPx('--sidebar-w', 280)) + 'px';
+  };
+  const setLayoutEditMode = (on) => {
+    appEl?.classList.toggle('layout-edit', on);
+    resizeHandles.forEach(h => h.classList.toggle('hidden', !on));
+    if (btnLayoutEdit) btnLayoutEdit.textContent = on ? '退出调节' : '进入调节';
+    refreshLayoutVals();
+  };
+  btnLayoutEdit?.addEventListener('click', () => setLayoutEditMode(!appEl?.classList.contains('layout-edit')));
+
+  // 拖拽手柄：pointerdown 捕获指针，pointermove 实时改内联变量，pointerup 落库
+  const startLayoutDrag = (handle, axis) => {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const isTop = axis === 'y';
+      const prop = isTop ? '--titlebar-h' : '--sidebar-w';
+      const start = isTop ? readPx('--titlebar-h', 69) : readPx('--sidebar-w', 280);
+      const startPos = isTop ? e.clientY : e.clientX;
+      const min = isTop ? 48 : 200;
+      const max = isTop ? 140 : 460;
+      const valEl = isTop ? layoutTitlebarVal : layoutSidebarVal;
+      try { handle.setPointerCapture(e.pointerId); } catch {}
+      handle.classList.add('dragging');
+      const onMove = (ev) => {
+        const delta = (isTop ? ev.clientY : ev.clientX) - startPos;
+        const v = Math.max(min, Math.min(max, Math.round(start + delta)));
+        document.documentElement.style.setProperty(prop, v + 'px');
+        if (valEl) valEl.textContent = v + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        if (isTop) appSettings.layoutTitlebarH = Math.round(readPx('--titlebar-h', 69));
+        else appSettings.layoutSidebarW = Math.round(readPx('--sidebar-w', 280));
+        saveSettings();
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  };
+  startLayoutDrag(document.getElementById('resize-top'), 'y');
+  startLayoutDrag(document.getElementById('resize-side'), 'x');
+
+  document.getElementById('btn-layout-reset')?.addEventListener('click', () => {
+    appSettings.layoutTitlebarH = 0;
+    appSettings.layoutSidebarW = 0;
+    applyLayoutVars();
+    saveSettings();
+    refreshLayoutVals();
+  });
+
   // 全局动画速度：炫彩流光 / 封面旋转 / 卡片描边跑马灯共用 --fx-speed
   const fxSpeedSlider = document.getElementById('set-fx-speed-slider');
   const fxSpeedVal = document.getElementById('set-fx-speed-val');
@@ -2450,20 +2715,62 @@ function bindSettingsEvents() {
 
   // 全局主菜单炫彩文字：开关（设置/均衡器/转码/顶栏弹窗文字的炫彩渐变流光）
   const glowToggle = document.getElementById('set-glow-toggle');
+  // 三分区独立开关 + 自定义颜色输入框（主开关开时生效）
+  const glowAreaToggle = {
+    header:   document.getElementById('set-glow-header'),
+    player:   document.getElementById('set-glow-player'),
+    settings: document.getElementById('set-glow-settings'),
+  };
+  const glowColorInput = {
+    header:   document.getElementById('set-glowcolor-header'),
+    player:   document.getElementById('set-glowcolor-player'),
+    settings: document.getElementById('set-glowcolor-settings'),
+  };
   const refreshGlowText = () => {
     if (glowToggle) {
       glowToggle.classList.toggle('active', appSettings.glowText);
       glowToggle.textContent = appSettings.glowText ? '开启' : '关闭';
     }
+    Object.keys(glowAreaToggle).forEach(k => {
+      const t = glowAreaToggle[k];
+      if (t) { t.classList.toggle('active', !!appSettings.glowAreas[k]); t.textContent = appSettings.glowAreas[k] ? '开启' : '关闭'; }
+    });
+    Object.keys(glowColorInput).forEach(k => {
+      const i = glowColorInput[k];
+      if (i) i.value = appSettings.glowColors[k] || '';
+    });
     applySettings(); saveSettings();
   };
   glowToggle?.addEventListener('click', () => { appSettings.glowText = !appSettings.glowText; refreshGlowText(); });
+  // 三分区开关：点击切 glowAreas[key]
+  Object.keys(glowAreaToggle).forEach(k => {
+    glowAreaToggle[k]?.addEventListener('click', () => { appSettings.glowAreas[k] = !appSettings.glowAreas[k]; refreshGlowText(); });
+  });
+  // 自定义颜色：校验 hex（3/6 位），规范为 #rrggbb 存 glowColors[key]；非法则清空键并把输入框还原
+  const normalizeHex = (s) => {
+    if (!/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test((s || '').trim())) return '';
+    let h = s.trim().replace(/^#/, '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    return '#' + h.toLowerCase();
+  };
+  const onGlowColor = (k, el) => {
+    const norm = normalizeHex(el.value);
+    if (norm) { appSettings.glowColors[k] = norm; }
+    else { appSettings.glowColors[k] = ''; el.value = ''; }
+    refreshGlowText();
+  };
+  Object.keys(glowColorInput).forEach(k => {
+    const el = glowColorInput[k];
+    el?.addEventListener('change', () => onGlowColor(k, el));
+    el?.addEventListener('blur', () => onGlowColor(k, el));
+  });
 
   // 恢复默认
   document.getElementById('set-reset')?.addEventListener('click', () => {
     appSettings = { ...SETTINGS_DEFAULT };
     refreshBlur(); refreshFrost(); refreshTranscode(); refreshAppTitle(); refreshMark();
     refreshCoverRot(); refreshLyric(); refreshGlowText(); refreshBtnVis(); refreshFxSpeed();
+    refreshMainUi(); applyLayoutVars(); refreshLayoutVals();
     if (typeof showToast === 'function') showToast('已恢复默认外观');
   });
 
@@ -2485,6 +2792,7 @@ function bindSettingsEvents() {
   }
 
   refreshBlur(); refreshFrost(); refreshTranscode(); refreshCoverRot(); refreshLyric(); refreshGlowText(); refreshBtnVis(); refreshFxSpeed();
+  refreshMainUi(); refreshLayoutVals();
 }
 
 function initSettings() {
@@ -2681,10 +2989,13 @@ function sizeCropFrame() {
   if (!stage || !frame) return;
   const sr = stage.getBoundingClientRect();
   if (sr.width === 0 || sr.height === 0) return;
-  // 设备屏幕宽高比（横屏/竖屏不同，比例随之变化）
-  const ar = (window.screen && window.screen.width && window.screen.height)
-    ? (window.screen.width / window.screen.height)
-    : (sr.width / sr.height);
+  // 设备视口宽高比（横屏/竖屏不同，比例随之变化；v2.22.15 同 cropAR 用 viewport 实测值）
+  const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+  const ar = (vw > 0 && vh > 0)
+    ? Math.max(0.5, Math.min(4, vw / vh))
+    : ((window.screen && window.screen.width && window.screen.height)
+      ? Math.max(0.5, Math.min(4, window.screen.width / window.screen.height))
+      : (sr.width / sr.height));
   const fill = 0.86; // 框占舞台比例，随屏幕缩放
   let w = sr.width * fill;
   let h = w / ar;
@@ -2717,7 +3028,9 @@ function openCrop() {
   const showImg = (src) => {
     const img = document.getElementById('crop-img');
     if (!img) return;
-    img.onload = () => { sizeCropFrame(); overlay.classList.remove('hidden'); };
+    // v2.22.15 时序修复：必须先 unhide 再量尺寸——overlay 为 display:none 时 stage rect 是 0×0，
+    // sizeCropFrame 会静默早退，frame 永远停在 4×4（首开必现，横屏矮视口下必踩）。
+    img.onload = () => { overlay.classList.remove('hidden'); sizeCropFrame(); };
     img.src = src;
   };
   if (FP && FP.pickImage) {
@@ -2743,10 +3056,14 @@ function openCrop() {
   input.click();
 }
 
-// 裁剪框锁定比例 = 设备屏幕宽高比（横竖屏不同）
+// 裁剪框锁定比例 = 当前视口宽高比（横竖屏不同）。
+// v2.22.15：改用 innerWidth/innerHeight——部分 Android WebView 的 screen.* 不随横竖屏
+// 旋转（恒报竖屏值），viewport 实测值一定跟随当前方向；clamp 防极端比例。
 function cropAR() {
+  const w = window.innerWidth || 0, h = window.innerHeight || 0;
+  if (w > 0 && h > 0) return Math.max(0.5, Math.min(4, w / h));
   if (window.screen && window.screen.width && window.screen.height) {
-    return window.screen.width / window.screen.height;
+    return Math.max(0.5, Math.min(4, window.screen.width / window.screen.height));
   }
   return 1;
 }
@@ -3114,6 +3431,13 @@ let currentDirName = '';
 const dirList = document.getElementById('dir-list');
 const btnAddDir = document.getElementById('btn-add-dir');
 
+// v4：音乐目录折叠（仅内存态，不持久化）。>2 个目录时可折叠，折叠时仅显示当前目录一行
+let dirCollapsed = false;
+const btnDirToggle = document.getElementById('btn-dir-toggle');
+const dirCurrentEl = document.getElementById('dir-current');
+btnDirToggle?.addEventListener('click', () => { dirCollapsed = !dirCollapsed; renderDirList(); });
+dirCurrentEl?.addEventListener('click', () => { if (dirCollapsed) { dirCollapsed = false; renderDirList(); } });
+
 // 从 localStorage 加载
 function loadSavedDirs() {
   try {
@@ -3131,7 +3455,16 @@ function saveSavedDirs() {
 function renderDirList() {
   if (!dirList) return;
   dirList.innerHTML = '';
-  
+
+  // v4：目录数 > 2 时可折叠；折叠态仅显示当前目录一行
+  const section = dirList.closest('.dir-section');
+  const collapsible = savedDirs.length > 2;
+  if (section) section.classList.toggle('collapsed', collapsible && dirCollapsed);
+  if (btnDirToggle) {
+    btnDirToggle.classList.toggle('hidden', !collapsible);
+    btnDirToggle.textContent = dirCollapsed ? ('展开 ' + savedDirs.length + ' 个 ▾') : '收起 ▴';
+  }
+
   if (savedDirs.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'dir-item';
@@ -3171,6 +3504,13 @@ function renderDirList() {
     
     dirList.appendChild(li);
   });
+
+  // 折叠态：在 header 下方显示当前选中目录（无选中则提示）
+  if (dirCurrentEl) {
+    const cur = savedDirs.find(d => d.uri === currentDirUri);
+    dirCurrentEl.innerHTML = '<span class="dir-icon">📂</span><span class="dir-name">' +
+      escapeHtml(cur ? cur.name : '未选择目录') + '</span>';
+  }
 }
 
 function escapeHtml(text) {

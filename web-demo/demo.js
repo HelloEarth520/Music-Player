@@ -149,6 +149,7 @@
   ];
 
   let currentFolderIdx = 0, currentTrackIdx = 0, isPlaying = false, curTime = 0, playTimer = null;
+  let dirCollapsed = false;   // v2.22.15 目录折叠（仅内存态，不持久化）
   // v2.16 状态：封面旋转 / 歌词显示
   let coverRotOn = true, lyricEnabled = true;
 
@@ -163,14 +164,33 @@
 
   /* ---------- 音乐目录（切换文件夹同步刷新歌曲） ---------- */
   const dl = $("#dir-list");
+  const btnDirToggle = $("#btn-dir-toggle");
+  if (btnDirToggle) btnDirToggle.addEventListener("click", () => { dirCollapsed = !dirCollapsed; renderDirs(); });
   function renderDirs() {
     dl.innerHTML = "";
+    const collapsible = FOLDERS.length > 2;
+    if (btnDirToggle) {
+      btnDirToggle.classList.toggle("hidden", !collapsible);
+      btnDirToggle.textContent = dirCollapsed ? ("展开 " + FOLDERS.length + " 个 ▾") : "收起 ▴";
+    }
+    if (collapsible && dirCollapsed) {
+      // 折叠态：仅显示当前目录一行，点它即展开
+      const cur = FOLDERS[currentFolderIdx];
+      const li = document.createElement("li");
+      li.className = "dir-item active";
+      li.innerHTML = `<span class="dir-icon">📁</span><span class="dir-name">${cur ? cur.name : ""}</span>`;
+      li.addEventListener("click", () => { dirCollapsed = false; renderDirs(); });
+      dl.appendChild(li);
+      return;
+    }
     FOLDERS.forEach((f, i) => {
       const li = document.createElement("li");
       li.className = "dir-item" + (i === currentFolderIdx ? " active" : "");
       li.innerHTML = `<span class="dir-icon">📁</span><span class="dir-name">${f.name}</span>`;
       li.addEventListener("click", () => {
         currentFolderIdx = i;
+        // 可折叠时选完即收起列表并切到所选目录
+        if (collapsible) dirCollapsed = true;
         renderDirs();
         renderPlaylist();
         selectTrack(0);
@@ -726,6 +746,70 @@
     }
   }
 
+  /* ---------- v2.22.15 D. 封面左右滑切歌 ----------
+     #cover 自身由 JS rAF 驱动旋转（写在 #cover 的 transform），
+     跟手位移写在外层 .cover-wrapper（与 www v2.22.15 同方案，避免覆盖旋转 transform）。
+     #cover 已设 touch-action:pan-y，横滑交给手势、纵滑交给页面。 */
+  const coverSwipeEl = $("#cover");
+  const coverWrapperEl = document.querySelector(".cover-wrapper");
+  let coverSwipe = null; // { id, startX, startY, moved }
+  function coverOnPointerDown(e) {
+    if (!coverWrapperEl) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!FOLDERS[currentFolderIdx] || FOLDERS[currentFolderIdx].tracks.length === 0) return;
+    coverSwipe = { id: e.pointerId, startX: e.clientX, startY: e.clientY, moved: false };
+    if (coverSwipeEl && coverSwipeEl.setPointerCapture) {
+      try { coverSwipeEl.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+  }
+  function coverOnPointerMove(e) {
+    if (!coverSwipe || e.pointerId !== coverSwipe.id) return;
+    const dx = e.clientX - coverSwipe.startX;
+    const dy = e.clientY - coverSwipe.startY;
+    if (!coverSwipe.moved) {
+      // 纵向位移大于水平位移：放弃手势（不切歌不位移），让给纵向滚动
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 6) {
+        if (coverSwipeEl && coverSwipeEl.releasePointerCapture) {
+          try { coverSwipeEl.releasePointerCapture(coverSwipe.id); } catch (_) {}
+        }
+        coverSwipe = null;
+        return;
+      }
+      if (Math.abs(dx) < 3) return; // 死区
+      coverSwipe.moved = true;
+    }
+    const clamped = Math.max(-40, Math.min(40, dx * 0.3)); // 跟手 30%，上限 ±40px
+    if (coverWrapperEl) {
+      coverWrapperEl.style.transition = "none";
+      coverWrapperEl.style.transform = "translateX(" + clamped + "px)";
+    }
+  }
+  function coverEndSwipe(e, allowSwitch) {
+    if (!coverSwipe || !e || e.pointerId !== coverSwipe.id) return;
+    const d = coverSwipe;
+    coverSwipe = null;
+    if (coverSwipeEl && coverSwipeEl.releasePointerCapture) {
+      try { coverSwipeEl.releasePointerCapture(d.id); } catch (_) {}
+    }
+    if (coverWrapperEl) {
+      coverWrapperEl.style.transition = "transform 0.2s ease";
+      coverWrapperEl.style.transform = "translateX(0)";
+      setTimeout(() => { if (coverWrapperEl) coverWrapperEl.style.transition = ""; }, 220);
+    }
+    if (!allowSwitch || !d.moved) return; // pointercancel / 未成立的手势不切歌
+    const dx = e.clientX - d.startX;
+    if (dx < -40) nextTrack();      // 左滑 → 下一首
+    else if (dx > 40) prevTrack();   // 右滑 → 上一首
+  }
+  function coverOnPointerUp(e) { coverEndSwipe(e, true); }
+  function coverOnPointerCancel(e) { coverEndSwipe(e, false); }
+  if (coverSwipeEl && coverWrapperEl && window.PointerEvent) {
+    coverSwipeEl.addEventListener("pointerdown", coverOnPointerDown, { passive: false });
+    window.addEventListener("pointermove", coverOnPointerMove, { passive: false });
+    window.addEventListener("pointerup", coverOnPointerUp);
+    window.addEventListener("pointercancel", coverOnPointerCancel);
+  }
+
   /* ---------- 进度（模拟播放推进 / 拖动定位） ---------- */
   function updateProgress() {
     const tr = FOLDERS[currentFolderIdx].tracks[currentTrackIdx];
@@ -1105,6 +1189,41 @@
   let blurOn = true, frostOn = true, blurVal = 10, frostVal = 8;
   let glowOn = true, fxSpeed = 10;              // 全局炫彩文字 / 全局动画速度（秒/圈）
   let eqBtnShown = true, showFileBtn = true, showFolderBtn = true, transcodeOn = true; // 顶栏按钮显隐
+  // v2.22.15：主界面元素显隐 / 布局调节 / 炫彩分区（持久化到 mp_appearance）
+  let showTrackTitle = true, showTrackArtist = true, showProgress = true, showVolume = true;
+  let layoutTitlebarH = 0, layoutSidebarW = 0;        // 0 = 跟随 .app CSS 默认（69px / 280px）
+  let glowAreas = { header: true, player: true, settings: true };
+  let glowColors = { header: "", player: "", settings: "" };
+
+  // v2.22.15 外观持久化：localStorage 键 mp_appearance，存一个 JSON 对象（启动读取、变更写回）
+  let mpAppearance = {};
+  try { mpAppearance = JSON.parse(localStorage.getItem("mp_appearance") || "{}"); } catch (_) {}
+  if (typeof mpAppearance.showTrackTitle === "boolean") showTrackTitle = mpAppearance.showTrackTitle;
+  if (typeof mpAppearance.showTrackArtist === "boolean") showTrackArtist = mpAppearance.showTrackArtist;
+  if (typeof mpAppearance.showProgress === "boolean") showProgress = mpAppearance.showProgress;
+  if (typeof mpAppearance.showVolume === "boolean") showVolume = mpAppearance.showVolume;
+  if (typeof mpAppearance.layoutTitlebarH === "number") layoutTitlebarH = mpAppearance.layoutTitlebarH;
+  if (typeof mpAppearance.layoutSidebarW === "number") layoutSidebarW = mpAppearance.layoutSidebarW;
+  if (typeof mpAppearance.glowText === "boolean") glowOn = mpAppearance.glowText;
+  if (mpAppearance.glowAreas && typeof mpAppearance.glowAreas === "object") {
+    if (typeof mpAppearance.glowAreas.header === "boolean") glowAreas.header = mpAppearance.glowAreas.header;
+    if (typeof mpAppearance.glowAreas.player === "boolean") glowAreas.player = mpAppearance.glowAreas.player;
+    if (typeof mpAppearance.glowAreas.settings === "boolean") glowAreas.settings = mpAppearance.glowAreas.settings;
+  }
+  if (mpAppearance.glowColors && typeof mpAppearance.glowColors === "object") {
+    if (typeof mpAppearance.glowColors.header === "string") glowColors.header = mpAppearance.glowColors.header;
+    if (typeof mpAppearance.glowColors.player === "string") glowColors.player = mpAppearance.glowColors.player;
+    if (typeof mpAppearance.glowColors.settings === "string") glowColors.settings = mpAppearance.glowColors.settings;
+  }
+  function storeAppearance() {
+    try {
+      localStorage.setItem("mp_appearance", JSON.stringify({
+        showTrackTitle, showTrackArtist, showProgress, showVolume,
+        layoutTitlebarH, layoutSidebarW,
+        glowText: glowOn, glowAreas: glowAreas, glowColors: glowColors
+      }));
+    } catch (_) {}
+  }
   function applyBlur() {
     const px = (blurOn ? blurVal : 0);
     document.documentElement.style.setProperty("--glass-blur", px + "px");
@@ -1114,9 +1233,43 @@
   function applyFrost() {
     document.documentElement.style.setProperty("--glass-frost", frostOn ? frostVal / 100 : 0);
   }
-  // 全局炫彩文字：<html>.fx-off 关闭 → CSS 逐项回退纯色（范围=全部文字 + 主界面图标）
+  // 全局炫彩文字：主开关关 → <html>.fx-off 全回退；开 → 三区独立控制（区关=加 fx-off-<区>）
   function applyGlow() {
-    document.documentElement.classList.toggle("fx-off", !glowOn);
+    const root = document.documentElement;
+    root.classList.toggle("fx-off", !glowOn);
+    if (glowOn) {
+      root.classList.toggle("fx-off-header", !glowAreas.header);
+      root.classList.toggle("fx-off-player", !glowAreas.player);
+      root.classList.toggle("fx-off-settings", !glowAreas.settings);
+    } else {
+      root.classList.remove("fx-off-header", "fx-off-player", "fx-off-settings");
+    }
+    const setColorVar = (area, val) => {
+      const v = (val && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(val)) ? val : "";
+      if (v) root.style.setProperty("--fx-color-" + area, v);
+      else root.style.removeProperty("--fx-color-" + area);
+    };
+    setColorVar("header", glowColors.header);
+    setColorVar("player", glowColors.player);
+    setColorVar("settings", glowColors.settings);
+  }
+  // 主界面元素显隐：在 .player-main-right 上增删 hide-* 类（仅控制显示，不动歌词引擎）
+  function applyMainUiVisibility() {
+    const el = document.querySelector(".player-main-right");
+    if (!el) return;
+    el.classList.toggle("hide-title", !showTrackTitle);
+    el.classList.toggle("hide-artist", !showTrackArtist);
+    el.classList.toggle("hide-progress", !showProgress);
+    el.classList.toggle("hide-volume", !showVolume);
+  }
+  // 布局调节：值 >0 时用内联 CSS 变量覆盖 .app 默认；=0 时移除内联变量回落 CSS 默认
+  function applyLayoutVars() {
+    const appEl = document.querySelector(".app");
+    if (!appEl) return;
+    if (layoutTitlebarH > 0) appEl.style.setProperty("--titlebar-h", layoutTitlebarH + "px");
+    else appEl.style.removeProperty("--titlebar-h");
+    if (layoutSidebarW > 0) appEl.style.setProperty("--sidebar-w", layoutSidebarW + "px");
+    else appEl.style.removeProperty("--sidebar-w");
   }
   // 全局动画速度：炫彩流光 / 封面旋转 / 卡片描边跑马灯共用 --fx-speed（秒/圈）
   function applyFxSpeed() {
@@ -1184,7 +1337,128 @@
 
   /* ---------- v2.22 全局炫彩文字开关 ---------- */
   const glowToggle = $("#set-glow-toggle");
-  if (glowToggle) glowToggle.addEventListener("click", function () { glowOn = !glowOn; refreshToggleUi(this, glowOn); applyGlow(); });
+  if (glowToggle) glowToggle.addEventListener("click", function () { glowOn = !glowOn; refreshToggleUi(this, glowOn); applyGlow(); storeAppearance(); });
+
+  /* ---------- v2.22.15 A. 主界面元素显隐 ×4 ---------- */
+  const uiTitleToggle = $("#set-ui-title");
+  const uiArtistToggle = $("#set-ui-artist");
+  const uiProgressToggle = $("#set-ui-progress");
+  const uiVolumeToggle = $("#set-ui-volume");
+  function bindUiToggle(el, key) {
+    if (!el) return;
+    el.addEventListener("click", function () {
+      if (key === "showTrackTitle") showTrackTitle = !showTrackTitle;
+      else if (key === "showTrackArtist") showTrackArtist = !showTrackArtist;
+      else if (key === "showProgress") showProgress = !showProgress;
+      else if (key === "showVolume") showVolume = !showVolume;
+      refreshToggleUi(this, !el.classList.contains("active"));
+      applyMainUiVisibility();
+      storeAppearance();
+    });
+  }
+  bindUiToggle(uiTitleToggle, "showTrackTitle");
+  bindUiToggle(uiArtistToggle, "showTrackArtist");
+  bindUiToggle(uiProgressToggle, "showProgress");
+  bindUiToggle(uiVolumeToggle, "showVolume");
+
+  /* ---------- v2.22.15 B. 布局调节（进入/退出 + 拖拽顶栏/侧栏 + 恢复） ---------- */
+  const appElLayout = document.querySelector(".app");
+  const btnLayoutEdit = $("#btn-layout-edit");
+  const resizeTop = $("#resize-top");
+  const resizeSide = $("#resize-side");
+  const layoutTitlebarVal = $("#layout-titlebar-val");
+  const layoutSidebarVal = $("#layout-sidebar-val");
+  const readPx = (name, fallback) => {
+    const app = document.querySelector(".app");
+    const n = app ? parseFloat(getComputedStyle(app).getPropertyValue(name)) : NaN;
+    return (isFinite(n) && n > 0) ? n : fallback;
+  };
+  const refreshLayoutVals = () => {
+    if (layoutTitlebarVal) layoutTitlebarVal.textContent = Math.round(readPx("--titlebar-h", 69)) + "px";
+    if (layoutSidebarVal) layoutSidebarVal.textContent = Math.round(readPx("--sidebar-w", 280)) + "px";
+  };
+  const setLayoutEditMode = (on) => {
+    if (appElLayout) appElLayout.classList.toggle("layout-edit", on);
+    if (btnLayoutEdit) btnLayoutEdit.textContent = on ? "退出调节" : "进入调节";
+    refreshLayoutVals();
+  };
+  if (btnLayoutEdit) btnLayoutEdit.addEventListener("click", () => setLayoutEditMode(!appElLayout.classList.contains("layout-edit")));
+  const startLayoutDrag = (handle, axis) => {
+    if (!handle) return;
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const isTop = axis === "y";
+      const prop = isTop ? "--titlebar-h" : "--sidebar-w";
+      const start = isTop ? readPx("--titlebar-h", 69) : readPx("--sidebar-w", 280);
+      const startPos = isTop ? e.clientY : e.clientX;
+      const min = isTop ? 48 : 200;
+      const max = isTop ? 140 : 460;
+      const valEl = isTop ? layoutTitlebarVal : layoutSidebarVal;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      handle.classList.add("dragging");
+      const onMove = (ev) => {
+        const delta = (isTop ? ev.clientY : ev.clientX) - startPos;
+        const v = Math.max(min, Math.min(max, Math.round(start + delta)));
+        if (appElLayout) appElLayout.style.setProperty(prop, v + "px");
+        if (valEl) valEl.textContent = v + "px";
+      };
+      const onUp = () => {
+        handle.classList.remove("dragging");
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+        layoutTitlebarH = Math.round(readPx("--titlebar-h", 69));
+        layoutSidebarW = Math.round(readPx("--sidebar-w", 280));
+        storeAppearance();
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    });
+  };
+  startLayoutDrag(resizeTop, "y");
+  startLayoutDrag(resizeSide, "x");
+  const layoutResetBtn = $("#btn-layout-reset");
+  if (layoutResetBtn) layoutResetBtn.addEventListener("click", () => {
+    layoutTitlebarH = 0; layoutSidebarW = 0;
+    applyLayoutVars(); storeAppearance(); refreshLayoutVals();
+    toast("布局已恢复默认");
+  });
+
+  /* ---------- v2.22.15 E. 炫彩分区：三区独立开关 + 自定义颜色 ---------- */
+  const glowAreaToggle = {
+    header: $("#set-glow-header"),
+    player: $("#set-glow-player"),
+    settings: $("#set-glow-settings"),
+  };
+  const glowColorInput = {
+    header: $("#set-glowcolor-header"),
+    player: $("#set-glowcolor-player"),
+    settings: $("#set-glowcolor-settings"),
+  };
+  Object.keys(glowAreaToggle).forEach((k) => {
+    const t = glowAreaToggle[k];
+    if (t) t.addEventListener("click", function () {
+      glowAreas[k] = !glowAreas[k];
+      refreshToggleUi(this, glowAreas[k]);
+      applyGlow(); storeAppearance();
+    });
+  });
+  const normalizeHex = (s) => {
+    if (!/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test((s || "").trim())) return "";
+    let h = (s || "").trim().replace(/^#/, "");
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+    return "#" + h.toLowerCase();
+  };
+  Object.keys(glowColorInput).forEach((k) => {
+    const i = glowColorInput[k];
+    if (i) i.addEventListener("input", function () {
+      const norm = normalizeHex(this.value);
+      if (norm) glowColors[k] = norm;
+      else { glowColors[k] = ""; this.value = ""; }
+      applyGlow(); storeAppearance();
+    });
+  });
 
   /* ---------- v2.22 动画速度滑块（3–60 秒/圈） ---------- */
   const fxSpeedSlider = $("#set-fx-speed-slider");
@@ -1210,6 +1484,10 @@
     eqBtnShown = true; showFileBtn = true; showFolderBtn = true; transcodeOn = true;
     appTitle = 'MusicPlayer-一切皆可自定'; showLogoMark = true;
     coverRotOn = true; lyricEnabled = true;
+    showTrackTitle = true; showTrackArtist = true; showProgress = true; showVolume = true;
+    layoutTitlebarH = 0; layoutSidebarW = 0;
+    glowAreas = { header: true, player: true, settings: true };
+    glowColors = { header: "", player: "", settings: "" };
     const ati = $("#set-app-title"); if (ati) ati.value = 'MusicPlayer-一切皆可自定';
     refreshToggleUi(blurToggle, true); refreshToggleUi(frostToggle, true);
     if (blurSlider) blurSlider.value = 10;
@@ -1224,6 +1502,10 @@
     refreshToggleUi($("#set-cover-rot-toggle"), true); refreshToggleUi($("#set-lyric-toggle"), true);
     refreshToggleUi($("#set-lyric-rainbow-toggle"), false);
     refreshToggleUi($("#set-logo-mark-toggle"), true);
+    refreshToggleUi(uiTitleToggle, true); refreshToggleUi(uiArtistToggle, true);
+    refreshToggleUi(uiProgressToggle, true); refreshToggleUi(uiVolumeToggle, true);
+    refreshToggleUi(glowAreaToggle.header, true); refreshToggleUi(glowAreaToggle.player, true); refreshToggleUi(glowAreaToggle.settings, true);
+    Object.keys(glowColorInput).forEach((k) => { if (glowColorInput[k]) glowColorInput[k].value = ""; });
     document.documentElement.style.setProperty("--lyric-size", "15px");
     document.documentElement.style.setProperty("--lyric-color", "#ffffff");
     const sec = $("#lyric-section"); if (sec) sec.classList.toggle("rainbow", false);
@@ -1231,6 +1513,8 @@
     const lsz = $("#set-lyric-size"); if (lsz) lsz.value = 15;
     lyricFontSize = 15;
     applyBlur(); applyFrost(); applyGlow(); applyFxSpeed(); applyToolbar(); applyAppTitle();
+    applyMainUiVisibility(); applyLayoutVars();
+    storeAppearance();
     toast("外观已恢复默认");
   }
   $("#set-reset").addEventListener("click", resetAppearance);
@@ -1363,12 +1647,23 @@
   applyGlow();
   applyFxSpeed();
   applyToolbar();
+  applyMainUiVisibility();
+  applyLayoutVars();
   applyAppTitle();
   // 演示版默认显示顶栏「转码 / 均衡器」按钮（www 版二者默认隐藏；此处与历史演示一致便于展示）
   refreshTranscodeBtn();
   refreshToggleUi($("#set-eq-btn-toggle"), eqBtnShown);
   refreshToggleUi($("#set-cover-rot-toggle"), coverRotOn);
   refreshToggleUi($("#set-lyric-toggle"), lyricEnabled);
+  // 刷新 v2.22.15 新增开关的 UI 状态（从 mp_appearance 读取）
+  refreshToggleUi(glowToggle, glowOn);
+  refreshToggleUi(uiTitleToggle, showTrackTitle); refreshToggleUi(uiArtistToggle, showTrackArtist);
+  refreshToggleUi(uiProgressToggle, showProgress); refreshToggleUi(uiVolumeToggle, showVolume);
+  refreshToggleUi(glowAreaToggle.header, glowAreas.header);
+  refreshToggleUi(glowAreaToggle.player, glowAreas.player);
+  refreshToggleUi(glowAreaToggle.settings, glowAreas.settings);
+  Object.keys(glowColorInput).forEach((k) => { if (glowColorInput[k]) glowColorInput[k].value = glowColors[k] || ""; });
+  refreshLayoutVals();
   // 歌词初始样式变量（与 www 播放器默认一致）
   document.documentElement.style.setProperty("--lyric-size", "15px");
   document.documentElement.style.setProperty("--lyric-color", "#ffffff");
