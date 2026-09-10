@@ -55,16 +55,22 @@
       </div>
     </header>
 
+    <!-- 布局调节手柄：拖拽调整顶栏高度（进入「调节」后显示） -->
+    <div id="resize-top" class="resize-handle resize-top"></div>
+
     <div class="main-layout">
       <!-- 左侧播放列表 -->
       <aside class="playlist-panel">
         <!-- 音乐目录列表 -->
         <div class="dir-section">
-          <div class="dir-header">
-            <span>📂 音乐目录</span>
+        <div class="dir-header">
+          <span class="dir-header-title">📂 音乐目录</span>
+          <div class="dir-header-actions">
+            <button id="btn-dir-toggle" class="btn-dir-toggle hidden" title="折叠/展开目录">收起 ▴</button>
             <button id="btn-add-dir" class="btn-add-dir" title="添加目录">＋</button>
           </div>
-          <ul id="dir-list" class="dir-list"></ul>
+        </div>
+        <ul id="dir-list" class="dir-list"></ul>
         </div>
         <!-- 播放列表 -->
         <div class="playlist-section">
@@ -74,6 +80,8 @@
           </div>
           <ul id="playlist" class="playlist"></ul>
         </div>
+      <!-- 布局调节手柄：拖拽调整侧栏宽度（进入「调节」后显示） -->
+      <div id="resize-side" class="resize-handle resize-side"></div>
       </aside>
 
       <!-- 右侧播放器主体 -->
@@ -614,6 +622,50 @@
           <div class="settings-hint">自定义顶栏左上角的名称，可单独关闭音符 🎵 标志</div>
         </div>
 
+        <!-- 主界面元素显隐：歌曲名称 / 创作者 / 进度条 / 音量条（默认全显示） -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">主界面元素显隐 (Main UI)</span>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">歌曲名称</span>
+            <button id="set-ui-title" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">创作者</span>
+            <button id="set-ui-artist" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">进度条</span>
+            <button id="set-ui-progress" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">音量条</span>
+            <button id="set-ui-volume" class="set-toggle active">开启</button>
+          </div>
+          <div class="settings-hint">控制主界面右列歌曲名称 / 创作者 / 进度条 / 音量条显隐。标题与创作者同时隐藏时整块信息区一并收起。</div>
+        </div>
+
+        <!-- 布局调节：拖拽顶栏高度 / 侧栏宽度（进入调节后手柄可见） -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">布局调节 (Layout)</span>
+            <button id="btn-layout-edit" class="set-toggle">进入调节</button>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">顶栏高度</span>
+            <span id="layout-titlebar-val" class="layout-val">69px</span>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">侧栏宽度</span>
+            <span id="layout-sidebar-val" class="layout-val">280px</span>
+          </div>
+          <div class="settings-row">
+            <button id="btn-layout-reset" class="set-pill">恢复</button>
+          </div>
+          <div class="settings-hint">点「进入调节」后，拖拽主界面顶部 / 左侧边缘可调顶栏高度与侧栏宽度（顶栏 48–140px，侧栏 200–460px），松手自动保存。</div>
+        </div>
+
         <!-- 炫彩文字：设置/均衡器/转码 弹窗文字用炫彩渐变流光（默认开启） -->
         <div class="settings-group glass">
           <div class="settings-group-head">
@@ -621,6 +673,29 @@
             <button id="set-glow-toggle" class="set-toggle active">开启</button>
           </div>
           <div class="settings-hint">除首开向导三页（协议声明/数据目录/设备形态）外，全部文字与主界面图标使用炫彩渐变流光：顶栏按钮、时钟、弹窗与设置项、播放列表与主页文字（歌名/歌手/时间/音量等）、播放控制图标。关闭则全部回退默认纯色。</div>
+        </div>
+
+        <!-- 炫彩分区：主开关开启时，三区可独立关闭炫彩，并可填自定义颜色 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">炫彩分区 (Glow Areas)</span>
+          </div>
+          <div class="settings-row">
+            <span class="set-label">顶栏区</span>
+            <button id="set-glow-header" class="set-toggle active">开启</button>
+            <input type="text" id="set-glowcolor-header" class="set-color-input" placeholder="如 #ffaa00，留空回退默认" />
+          </div>
+          <div class="settings-row">
+            <span class="set-label">主界面区</span>
+            <button id="set-glow-player" class="set-toggle active">开启</button>
+            <input type="text" id="set-glowcolor-player" class="set-color-input" placeholder="如 #ffaa00，留空回退默认" />
+          </div>
+          <div class="settings-row">
+            <span class="set-label">设置与弹窗区</span>
+            <button id="set-glow-settings" class="set-toggle active">开启</button>
+            <input type="text" id="set-glowcolor-settings" class="set-color-input" placeholder="如 #ffaa00，留空回退默认" />
+          </div>
+          <div class="settings-hint">主开关开启时，三区可独立关闭炫彩；填入自定义颜色（hex）覆盖该区文字渐变色，留空回退默认炫彩。</div>
         </div>
 
         <!-- 动画速度：炫彩流光 + 封面旋转 + 卡片描边跑马灯 -->
@@ -663,7 +738,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.22.12</span>
+        <span class="settings-version">v2.22.15</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

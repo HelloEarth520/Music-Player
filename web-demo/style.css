@@ -53,6 +53,7 @@ html, body {
    ============================ */
 .titlebar {
   display: flex; align-items: center; justify-content: space-between;
+  height: var(--titlebar-h); box-sizing: border-box; overflow: hidden;
   padding: 14px 28px;
   /* 磨砂面板：透明底 + 顶部高光，不使用 backdrop-filter（毛玻璃）。
      透明可见背景、带磨砂质感，且不跟着悬浮菜单一起出现/变动。
@@ -141,7 +142,7 @@ html, body {
    Playlist Panel
    ============================ */
 .playlist-panel {
-  width: 280px;
+  width: var(--sidebar-w);
   flex-shrink: 0;
   /* 磨砂面板（见 .titlebar 注释）：透明磨砂底，不使用 backdrop-filter */
   background:
@@ -1960,7 +1961,7 @@ html, body {
 }
 
 /* 顶栏实测高度变量：抽屉/面板 top 与其对齐（641px 及以上 69px，≤640px 见下） */
-.app { --titlebar-h: 69px; }
+.app { --titlebar-h: 69px; --sidebar-w: 280px; }
 
 /* ---------------- 断点一：≤1023px 播放列表面板变左侧抽屉 ---------------- */
 @media (max-width: 1023px), (pointer: coarse) {
@@ -2609,4 +2610,129 @@ html.fx-off .glow-select-item.sel {
   animation: ring-run var(--fx-speed, 10s) linear infinite;
   animation-play-state: var(--ring-run, paused);
   pointer-events: none;
+}
+
+/* ============================================================
+   v2.22.15 移植自 www/：主界面元素显隐 / 布局调节 / 目录折叠 / 炫彩分区
+   ============================================================ */
+
+/* --- A. 主界面元素显隐：在 .player-main-right 上增删 hide-* 类 --- */
+.player-main-right.hide-title #track-title,
+.player-main-right.hide-title #track-format { display: none; }
+.player-main-right.hide-artist #track-artist { display: none; }
+/* 标题与创作者同时隐藏时，整个信息块一并收起，避免残留空 gap */
+.player-main-right.hide-title.hide-artist .track-info { display: none; }
+.player-main-right.hide-progress .progress-section { display: none; }
+.player-main-right.hide-volume .volume-section { display: none; }
+
+/* --- B. 布局调节：可拖拽手柄（顶栏高度 / 侧栏宽度） --- */
+.resize-handle { display: none; touch-action: none; }
+.resize-handle.hidden { display: none; }
+.app.layout-edit .resize-handle { display: block; }
+.app.layout-edit { user-select: none; }
+.resize-top {
+  position: absolute; left: 0; right: 0; top: var(--titlebar-h);
+  height: 14px; cursor: ns-resize; z-index: 60;
+  background: rgba(255,255,255,.06);
+}
+.resize-side {
+  position: absolute; top: 0; bottom: 0; right: 0;
+  width: 12px; cursor: ew-resize; z-index: 60;
+  background: rgba(255,255,255,.06);
+}
+.resize-handle.dragging { background: rgba(52,211,153,.35); }
+.layout-val {
+  font-size: .82rem; color: var(--text-muted, #b9b6d6);
+  min-width: 64px; text-align: right;
+}
+/* 恢复按钮：椭圆胶囊，不套方形步进钮 */
+.set-pill {
+  width: auto; height: 32px; padding: 0 22px; border-radius: 999px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--card-border);
+  color: var(--text); font-size: .85rem; cursor: pointer;
+  transition: var(--transition);
+}
+.set-pill:hover { background: rgba(167,139,250,.2); border-color: var(--accent); }
+
+/* --- C. 音乐目录折叠（目录数 > 2 时）：折叠按钮 + 当前目录行 --- */
+.dir-header-actions { display: inline-flex; align-items: center; gap: 6px; }
+.btn-dir-toggle {
+  background: rgba(255,255,255,.10);
+  border: 1px solid var(--card-border);
+  color: var(--text-muted, #b9b6d6);
+  font-size: .72rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+.btn-dir-toggle:hover { background: rgba(255,255,255,.18); color: var(--text); }
+.btn-dir-toggle.hidden { display: none; }
+
+/* --- D. 封面左右滑切歌：横滑交给手势、纵滑交给页面滚动 --- */
+#cover { touch-action: pan-y; }
+
+/* --- E. 炫彩分区自定义颜色输入框 --- */
+.set-color-input {
+  height: 32px; padding: 0 10px; border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+  font-family: monospace;
+  width: 150px;
+}
+
+/* --- E. 炫彩分区独立控制（主开关开启时，三区可单独关闭） ---
+   关某区 → 给 <html> 加对应 fx-off-<区> 类，仅本区回退纯色（或自定义色），
+   其余区保持炫彩。--fx-color-<区> 由 JS 写入自定义色（非空），空则回落各选择器默认回退色。
+   上方 html.fx-off 旧全回退规则全部保留（主开关关闭时生效）。 */
+/* 顶栏区 */
+html.fx-off-header .titlebar .lbl {
+  color: var(--fx-color-header, var(--text-titlebar, #f1f0ff));
+  -webkit-text-fill-color: var(--fx-color-header, var(--text-titlebar, #f1f0ff));
+  background: none; animation: none;
+}
+html.fx-off-header .logo #logo-text,
+html.fx-off-header #header-clock {
+  color: var(--fx-color-header, currentColor);
+  -webkit-text-fill-color: var(--fx-color-header, currentColor);
+  background: none; animation: none;
+}
+/* 主界面区 */
+html.fx-off-player .dir-header,
+html.fx-off-player .playlist-header,
+html.fx-off-player .track-count,
+html.fx-off-player .track-title,
+html.fx-off-player .track-artist,
+html.fx-off-player .track-format,
+html.fx-off-player .progress-section .time,
+html.fx-off-player .vol-value,
+html.fx-off-player .format-hint,
+html.fx-off-player .playlist-item-title {
+  color: var(--fx-color-player, currentColor);
+  -webkit-text-fill-color: var(--fx-color-player, currentColor);
+  background: none; animation: none;
+}
+/* 设置与弹窗区 */
+html.fx-off-settings .settings-title,
+html.fx-off-settings .transcode-title,
+html.fx-off-settings .equalizer-title,
+html.fx-off-settings .tc-label,
+html.fx-off-settings .tc-row label,
+html.fx-off-settings .settings-row .settings-row-label {
+  color: var(--fx-color-settings, currentColor);
+  -webkit-text-fill-color: var(--fx-color-settings, currentColor);
+  background: none; animation: none;
+}
+html.fx-off-settings .settings-group-title {
+  color: var(--fx-color-settings, var(--text));
+  -webkit-text-fill-color: var(--fx-color-settings, var(--text));
+  background: none; animation: none;
+}
+html.fx-off-settings .settings-row .set-label {
+  color: var(--fx-color-settings, var(--text-muted));
+  -webkit-text-fill-color: var(--fx-color-settings, var(--text-muted));
+  background: none; animation: none;
 }
