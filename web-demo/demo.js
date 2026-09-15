@@ -229,12 +229,37 @@
     el.classList.add("locate-flash");
     setTimeout(() => el.classList.remove("locate-flash"), 1600);
   }
+  /* v2.22.17：改为自定义 rAF 平滑滚动——CSS smooth 时长不可控，长距离会滚得过久 */
+  let locateRafId = 0;
+  function cancelLocateScroll() { if (locateRafId) { cancelAnimationFrame(locateRafId); locateRafId = 0; } }
+  ["pointerdown", "wheel", "touchstart"].forEach(function (ev) {
+    pl.addEventListener(ev, cancelLocateScroll, { passive: true });
+  });
+  function startLocateScroll(target, durationMs) {
+    cancelLocateScroll();
+    const start = pl.scrollTop, delta = target - start, t0 = performance.now();
+    const ease = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+    const step = function (now) {
+      const p = Math.min(1, (now - t0) / durationMs);
+      pl.scrollTop = start + delta * ease(p);
+      locateRafId = p < 1 ? requestAnimationFrame(step) : 0;
+    };
+    locateRafId = requestAnimationFrame(step);
+  }
   function locateCurrentTrack() {
     const el = $$(".playlist-item")[currentTrackIdx];
     if (!el) { toast("当前没有正在播放的歌曲"); return; }
-    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); }
-    catch (e) { el.scrollIntoView({ block: "center" }); }
-    flashPlaylistItem(el);
+    // 居中：元素相对容器顶部的偏移 -（容器高 - 行高）/ 2
+    const relTop = el.getBoundingClientRect().top - pl.getBoundingClientRect().top + pl.scrollTop;
+    const target = Math.max(0, Math.min(
+      relTop - (pl.clientHeight - el.offsetHeight) / 2,
+      pl.scrollHeight - pl.clientHeight));
+    const rows = Math.abs(target - pl.scrollTop) / Math.max(1, el.offsetHeight);
+    const sec = rows <= 10 ? 0.6 : Math.min(15, Math.max(1, locateScrollSec));
+    if (Math.abs(target - pl.scrollTop) < 1) { flashPlaylistItem(el); return; }
+    startLocateScroll(target, sec * 1000);
+    // web-demo 全量渲染无虚拟重建，闪烁不会丢，动画末尾补一次即可
+    setTimeout(function () { flashPlaylistItem(el); }, sec * 1000 + 120);
   }
 
   /* ---------- v2.16 歌词区：全量滚动列表（mock 驱动，行为对齐 www/player.js 引擎） ----------
@@ -1223,6 +1248,12 @@
   if (typeof mpAppearance.showVolume === "boolean") showVolume = mpAppearance.showVolume;
   if (typeof mpAppearance.layoutTitlebarH === "number") layoutTitlebarH = mpAppearance.layoutTitlebarH;
   if (typeof mpAppearance.layoutSidebarW === "number") layoutSidebarW = mpAppearance.layoutSidebarW;
+  // v2.22.17 定位滚动时长（秒，1~15，默认 3）
+  let locateScrollSec = 3;
+  if (typeof mpAppearance.locateScrollSec === "number" &&
+      mpAppearance.locateScrollSec >= 1 && mpAppearance.locateScrollSec <= 15) {
+    locateScrollSec = mpAppearance.locateScrollSec;
+  }
   if (typeof mpAppearance.glowText === "boolean") glowOn = mpAppearance.glowText;
   if (mpAppearance.glowAreas && typeof mpAppearance.glowAreas === "object") {
     if (typeof mpAppearance.glowAreas.header === "boolean") glowAreas.header = mpAppearance.glowAreas.header;
@@ -1239,7 +1270,8 @@
       localStorage.setItem("mp_appearance", JSON.stringify({
         showTrackTitle, showTrackArtist, showProgress, showVolume,
         layoutTitlebarH, layoutSidebarW,
-        glowText: glowOn, glowAreas: glowAreas, glowColors: glowColors
+        glowText: glowOn, glowAreas: glowAreas, glowColors: glowColors,
+        locateScrollSec: locateScrollSec
       }));
     } catch (_) {}
   }
@@ -1445,6 +1477,20 @@
   });
 
   /* ---------- v2.22.15 E. 炫彩分区：三区独立开关 + 自定义颜色 ---------- */
+  // v2.22.17 定位滚动时长滑块（1~15 秒）
+  const locateSecSlider = $("#set-locate-sec-slider");
+  const locateSecVal = $("#set-locate-sec-val");
+  if (locateSecSlider) {
+    locateSecSlider.value = locateScrollSec;
+    if (locateSecVal) locateSecVal.textContent = locateScrollSec + "s";
+    locateSecSlider.addEventListener("input", function () {
+      const v = parseInt(this.value, 10);
+      locateScrollSec = (v >= 1 && v <= 15) ? v : 3;
+      if (locateSecVal) locateSecVal.textContent = locateScrollSec + "s";
+      storeAppearance();
+    });
+  }
+
   const glowAreaToggle = {
     header: $("#set-glow-header"),
     player: $("#set-glow-player"),

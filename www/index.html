@@ -781,10 +781,22 @@
           </div>
           <div class="settings-hint">点击「进入调节」后，顶栏下方与侧栏右缘出现拖拽条：上下拖调顶栏高度、左右拖调侧栏宽度，松手自动保存。手机抽屉态保持原样</div>
         </div>
+
+        <!-- v2.22.17 定位滚动时长：目录头「定位当前播放」的滚动过程耗时 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">定位滚动 (Locate)</span>
+          </div>
+          <div class="settings-row">
+            <input type="range" id="set-locate-sec-slider" min="1" max="15" value="3" step="1" class="set-slider" />
+            <span id="set-locate-sec-val" class="set-val">3s</span>
+          </div>
+          <div class="settings-hint">点击目录头的「定位当前播放」后，列表会带着可见的滚动过程滑向当前曲目（列表进度条实时移动）。此处设定全程耗时：1 秒最快、15 秒最慢。距离很近（≤10 行）时自动缩短到 0.6 秒，避免拖沓；滚动途中触摸或滚轮可随时打断</div>
+        </div>
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.22.16</span>
+        <span class="settings-version">v2.22.17</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

@@ -718,6 +718,18 @@
           <div class="settings-hint">统一控制炫彩流光、封面旋转、当前播放卡片描边跑马灯的速度（秒/圈），数值越大越慢</div>
         </div>
 
+        <!-- v2.22.17 定位滚动时长 -->
+        <div class="settings-group glass">
+          <div class="settings-group-head">
+            <span class="settings-group-title">定位滚动 (Locate)</span>
+          </div>
+          <div class="settings-row">
+            <input type="range" id="set-locate-sec-slider" min="1" max="15" value="3" step="1" class="set-slider" />
+            <span id="set-locate-sec-val" class="set-val">3s</span>
+          </div>
+          <div class="settings-hint">点击目录头的「定位当前播放」后，列表会带着可见的滚动过程滑向当前曲目。此处设定全程耗时：1 秒最快、15 秒最慢</div>
+        </div>
+
         <!-- 背景来源：4 选 1 -->
         <div class="settings-group glass">
           <div class="settings-group-head">
@@ -746,7 +758,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.22.16</span>
+        <span class="settings-version">v2.22.17</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>

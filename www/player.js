@@ -158,6 +158,7 @@ let lastRenderedRange = null;     // 上一次渲染的可见区间 [start, end]
 // v2.22.16 定位当前播放：滚动落位后打一次高亮闪烁
 let locatePendingFlash = false;   // 已在滚动中，等滚动停止后再挂闪烁类
 let locateFallbackTimer = 0;      // 兜底：目标位置未产生滚动事件时也要闪
+let locateRafId = 0;              // v2.22.17 自定义平滑滚动的 rAF 句柄（0 = 无动画）
 
 // ==============================
 // DOM 引用
@@ -383,26 +384,54 @@ function locateCurrentTrack() {
   // 居中：目标行顶部 -（可视高 - 行高）/ 2
   const target = Math.max(0, Math.min(state.currentIndex * itemH - (viewH - itemH) / 2, maxScroll));
 
-  const dist = Math.abs(target - playlistEl.scrollTop);
-  // 距离过大（>40 行 ≈ 2720px，千首级列表常见）时直接跳，smooth 会滚好几秒
-  const behavior = dist > itemH * 40 ? 'auto' : 'smooth';
+  const delta = target - playlistEl.scrollTop;
+  if (Math.abs(delta) < 1) {          // 已在目标位置：直接闪，不必滚
+    flashCurrentPlaylistItem();
+    return;
+  }
+
+  // 耗时：设置里的 1~15 秒；距离 ≤10 行时缩短到 0.6s（3 秒爬 10 行太拖沓）
+  const rows = Math.abs(delta) / itemH;
+  const sec = rows <= 10 ? 0.6 : Math.min(15, Math.max(1, appSettings.locateScrollSec || 3));
+  startLocateScroll(target, sec * 1000);
+}
+
+/**
+ * 自定义 rAF 平滑滚动（不依赖 CSS smooth：其时长不可控，且长距离会滚到几秒以上）。
+ * 逐帧写 scrollTop → 列表进度条随之移动，滚动过程全程可见；滚动事件照常驱动虚拟渲染。
+ */
+function startLocateScroll(target, durationMs) {
+  cancelLocateScroll();
+  const start = playlistEl.scrollTop;
+  const delta = target - start;
+  const t0 = performance.now();
+  const ease = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2); // easeInOutQuad
 
   locatePendingFlash = true;
   if (locateFallbackTimer) clearTimeout(locateFallbackTimer);
-  // 兜底：目标位置与当前相同则不产生 scroll 事件，停稳回调不会触发
+  // 兜底：动画结束后若因任何原因没走到停稳回调，也要把闪烁打上
   locateFallbackTimer = setTimeout(() => {
     locateFallbackTimer = 0;
     if (!locatePendingFlash) return;
     locatePendingFlash = false;
     flashCurrentPlaylistItem();
-  }, behavior === 'auto' ? 400 : 900);
+  }, durationMs + 600);
 
-  try {
-    playlistEl.scrollTo({ top: target, behavior });
-  } catch (e) {
-    playlistEl.scrollTop = target; // 老 WebView 不支持 options 形式
-  }
+  const step = now => {
+    const p = Math.min(1, (now - t0) / durationMs);
+    playlistEl.scrollTop = start + delta * ease(p);
+    locateRafId = p < 1 ? requestAnimationFrame(step) : 0;
+  };
+  locateRafId = requestAnimationFrame(step);
 }
+
+function cancelLocateScroll() {
+  if (locateRafId) { cancelAnimationFrame(locateRafId); locateRafId = 0; }
+}
+
+// 用户主动触摸 / 滚轮 / 拖动时立即中断定位动画，避免抢滚动（passive 不影响原有滚动）
+['pointerdown', 'wheel', 'touchstart'].forEach(ev =>
+  playlistEl.addEventListener(ev, cancelLocateScroll, { passive: true }));
 
 /** 给当前播放项挂一次闪烁；虚拟渲染未覆盖到时强制重渲染一次再挂 */
 function flashCurrentPlaylistItem() {
@@ -2310,7 +2339,7 @@ function bindEqualizerEvents() {
 // ==============================
 const SETTINGS_KEY = 'musicplayer_appearance';
 const SETTINGS_DEFAULT = {
-  settingsVersion: 5,   // 设置结构版本：5 = 炫彩分区独立开关 + 自定义颜色（2026-09-10）
+  settingsVersion: 6,   // 设置结构版本：6 = 定位滚动时长 locateScrollSec（2026-09-16）
   blurOn: true, blurPx: 10,
   frostOn: true, frostPct: 18,
   eqEnabled: false,  // 均衡器开关：默认关闭——开启才创建 AudioContext(WebAudio 接管 audio)；关闭则 audio 直出系统，后台/息屏播放最稳
@@ -2344,6 +2373,8 @@ const SETTINGS_DEFAULT = {
   // v4：布局调节（0 = 用设备默认分档）
   layoutTitlebarH: 0,     // 顶栏高度 px（>0 时覆盖 --titlebar-h）
   layoutSidebarW: 0,      // 侧栏宽度 px（>0 时覆盖 --sidebar-w）
+  // v6：定位滚动时长（秒）——目录头「定位当前播放」滑到当前曲目的全程耗时，1~15
+  locateScrollSec: 3,
 };
 let appSettings = { ...SETTINGS_DEFAULT };
 
@@ -2397,6 +2428,13 @@ function loadSettings() {
           if (typeof appSettings.glowColors.settings !== 'string') appSettings.glowColors.settings = '';
         }
         appSettings.settingsVersion = 5;
+        saveSettings();
+      }
+      // v6 迁移：定位滚动时长（默认 3 秒，合法区间 1~15）
+      if (!appSettings.settingsVersion || appSettings.settingsVersion < 6) {
+        const s = appSettings.locateScrollSec;
+        if (typeof s !== 'number' || !isFinite(s) || s < 1 || s > 15) appSettings.locateScrollSec = 3;
+        appSettings.settingsVersion = 6;
         saveSettings();
       }
     }
@@ -2727,6 +2765,21 @@ function bindSettingsEvents() {
     applySettings(); saveSettings();
   };
   fxSpeedSlider?.addEventListener('input', (e) => { appSettings.fxSpeed = parseInt(e.target.value, 10) || 10; refreshFxSpeed(); });
+
+  // v2.22.17 定位滚动时长：目录头「定位当前播放」滑到当前曲目的全程耗时（1~15 秒）
+  const locateSecSlider = document.getElementById('set-locate-sec-slider');
+  const locateSecVal = document.getElementById('set-locate-sec-val');
+  const refreshLocateSec = () => {
+    if (locateSecSlider) locateSecSlider.value = appSettings.locateScrollSec;
+    if (locateSecVal) locateSecVal.textContent = appSettings.locateScrollSec + 's';
+    saveSettings();
+  };
+  locateSecSlider?.addEventListener('input', (e) => {
+    const v = parseInt(e.target.value, 10);
+    appSettings.locateScrollSec = (isFinite(v) && v >= 1 && v <= 15) ? v : 3;
+    refreshLocateSec();
+  });
+  refreshLocateSec();
 
   // 封面旋转开关
   const coverRotToggle = document.getElementById('set-cover-rot-toggle');
