@@ -155,6 +155,10 @@ let playlistRafPending = false;   // rAF 挂起标记：一帧内多次 scroll �
 let playlistScrollTimer = 0;      // scrolling 类复位定时器（滚动停止 120ms 后移除）
 let lastRenderedRange = null;     // 上一次渲染的可见区间 [start, end]；null=失效，需强制重建
 
+// v2.22.16 定位当前播放：滚动落位后打一次高亮闪烁
+let locatePendingFlash = false;   // 已在滚动中，等滚动停止后再挂闪烁类
+let locateFallbackTimer = 0;      // 兜底：目标位置未产生滚动事件时也要闪
+
 // ==============================
 // DOM 引用
 // ==============================
@@ -303,6 +307,12 @@ function onPlaylistScroll() {
   playlistScrollTimer = setTimeout(() => {
     playlistScrollTimer = 0;
     playlistEl.classList.remove('scrolling');
+    // v2.22.16：定位滚动已停稳，此刻节点不会再被重建，闪烁类才不会丢
+    if (locatePendingFlash) {
+      locatePendingFlash = false;
+      if (locateFallbackTimer) { clearTimeout(locateFallbackTimer); locateFallbackTimer = 0; }
+      flashCurrentPlaylistItem();
+    }
   }, 120);
 
   // rAF 节流：把真正的渲染合并到下一帧，一帧内多个 scroll 事件只渲染一次
@@ -350,6 +360,63 @@ function renderVisibleItems(force) {
 
   // 注意：不要在滚动渲染时调用 scrollIntoView，否则用户滑动会被强制拉回当前歌曲位置
   // 切歌时的滚动定位由 playAt 单独处理
+}
+
+// ==============================
+// v2.22.16 定位当前播放：滚到列表正中 + 高亮闪烁
+// ==============================
+/**
+ * 把当前播放曲目滚到播放列表正中并闪烁一次。
+ * 取舍：不做「切歌自动跟随」——历史结论是自动 scrollIntoView 会在用户手动浏览时把列表
+ * 强行拉回（见 renderVisibleItems 注释），因此改由用户主动点击触发。
+ */
+function locateCurrentTrack() {
+  if (state.currentIndex < 0 || state.currentIndex >= state.playlist.length) {
+    if (typeof showToast === 'function') showToast('当前没有正在播放的歌曲');
+    return;
+  }
+
+  const itemH = VIRTUAL_CONFIG.itemHeight;
+  const viewH = playlistEl.clientHeight || VIRTUAL_CONFIG.containerHeight || 0;
+  const totalH = state.playlist.length * itemH;
+  const maxScroll = Math.max(0, totalH - viewH);
+  // 居中：目标行顶部 -（可视高 - 行高）/ 2
+  const target = Math.max(0, Math.min(state.currentIndex * itemH - (viewH - itemH) / 2, maxScroll));
+
+  const dist = Math.abs(target - playlistEl.scrollTop);
+  // 距离过大（>40 行 ≈ 2720px，千首级列表常见）时直接跳，smooth 会滚好几秒
+  const behavior = dist > itemH * 40 ? 'auto' : 'smooth';
+
+  locatePendingFlash = true;
+  if (locateFallbackTimer) clearTimeout(locateFallbackTimer);
+  // 兜底：目标位置与当前相同则不产生 scroll 事件，停稳回调不会触发
+  locateFallbackTimer = setTimeout(() => {
+    locateFallbackTimer = 0;
+    if (!locatePendingFlash) return;
+    locatePendingFlash = false;
+    flashCurrentPlaylistItem();
+  }, behavior === 'auto' ? 400 : 900);
+
+  try {
+    playlistEl.scrollTo({ top: target, behavior });
+  } catch (e) {
+    playlistEl.scrollTop = target; // 老 WebView 不支持 options 形式
+  }
+}
+
+/** 给当前播放项挂一次闪烁；虚拟渲染未覆盖到时强制重渲染一次再挂 */
+function flashCurrentPlaylistItem() {
+  const sel = `.playlist-item[data-index="${state.currentIndex}"]`;
+  let el = playlistEl.querySelector(sel);
+  if (!el) {
+    renderVisibleItems(true);
+    el = playlistEl.querySelector(sel);
+  }
+  if (!el) return;
+  el.classList.remove('locate-flash');
+  void el.offsetWidth;   // 强制重排，允许连续点击重复触发动画
+  el.classList.add('locate-flash');
+  setTimeout(() => el.classList.remove('locate-flash'), 1600);
 }
 
 function createPlaylistItem(track, index) {
@@ -3651,6 +3718,12 @@ renderDirList();
 
 if (btnAddDir) {
   btnAddDir.addEventListener('click', addNewDirectory);
+}
+
+// v2.22.16：目录头定位当前播放按钮（＋ 左侧）
+const btnLocateCurrent = document.getElementById('btn-locate-current');
+if (btnLocateCurrent) {
+  btnLocateCurrent.addEventListener('click', locateCurrentTrack);
 }
 
 console.log('[Dir] 目录管理模块已加载，已保存', savedDirs.length, '个目录');

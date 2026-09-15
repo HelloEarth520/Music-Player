@@ -1341,6 +1341,26 @@ html, body {
   transform: scale(1.1);
 }
 
+/* v2.22.16 定位当前播放按钮（目录头，位于「＋」左侧）：圆形、青色，与添加目录同规格 */
+.btn-locate-current {
+  background: rgba(34,211,238,0.15);
+  border: 1px solid rgba(34,211,238,0.32);
+  color: #22d3ee;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+.btn-locate-current:hover { background: rgba(34,211,238,0.32); transform: scale(1.1); }
+.btn-locate-current:active { transform: scale(0.94); }
+.btn-locate-current.disabled { opacity: 0.35; cursor: default; transform: none; }
+
 .dir-list {
   list-style: none;
   padding: 0 8px;
@@ -2610,6 +2630,20 @@ html.fx-off .glow-select-item.sel {
   animation: ring-run var(--fx-speed, 10s) linear infinite;
   animation-play-state: var(--ring-run, paused);
   pointer-events: none;
+}
+
+/* ============ v2.22.16 定位当前播放：落位后整卡闪烁 1.5s ============
+   随机播放/长列表下，2px 跑马灯细环在快速滚动中几乎看不见，
+   定位按钮落位后给整张卡片一次高亮脉冲，确保一眼能找到。 */
+@keyframes locate-flash {
+  0%   { background-color: rgba(34,211,238,0.42); box-shadow: 0 0 0 0 rgba(34,211,238,0.85); }
+  35%  { background-color: rgba(34,211,238,0.16); box-shadow: 0 0 0 10px rgba(34,211,238,0); }
+  55%  { background-color: rgba(34,211,238,0.42); box-shadow: 0 0 0 0 rgba(34,211,238,0.85); }
+  100% { background-color: rgba(34,211,238,0);    box-shadow: 0 0 0 14px rgba(34,211,238,0); }
+}
+.playlist-item.locate-flash {
+  animation: locate-flash 1.5s ease-out 1 both;
+  border-color: rgba(34,211,238,0.9) !important;
 }
 
 /* ============================================================

@@ -221,6 +221,22 @@
     $$(".playlist-item").forEach((x, i) => x.classList.toggle("active", i === currentTrackIdx));
   }
 
+  /* ---------- v2.22.16 定位当前播放：滚到列表正中 + 高亮闪烁 ----------
+     web-demo 为全量渲染（无虚拟滚动），可直接 scrollIntoView 并挂闪烁类 */
+  function flashPlaylistItem(el) {
+    el.classList.remove("locate-flash");
+    void el.offsetWidth;                       // 强制重排，允许连续点击重复触发
+    el.classList.add("locate-flash");
+    setTimeout(() => el.classList.remove("locate-flash"), 1600);
+  }
+  function locateCurrentTrack() {
+    const el = $$(".playlist-item")[currentTrackIdx];
+    if (!el) { toast("当前没有正在播放的歌曲"); return; }
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    catch (e) { el.scrollIntoView({ block: "center" }); }
+    flashPlaylistItem(el);
+  }
+
   /* ---------- v2.16 歌词区：全量滚动列表（mock 驱动，行为对齐 www/player.js 引擎） ----------
      当前句始终居中放大、上下收敛视差；可滑动/滚轮浏览，停止 5 秒自动回位；
      浏览歌词时右侧「— ▶」悬浮钮出现，点击直接从此句播放（curTime 定位，模拟 seek）；回到跟随后按钮消失 */
@@ -1042,6 +1058,9 @@
 
   /* ---------- v2.22 真实本地文件上传（浏览器直出播放；原“不支持”改为可用） ---------- */
   $("#btn-add-dir").addEventListener("click", () => toast("体验版不支持添加目录"));
+  // v2.22.16：目录头定位当前播放按钮（＋ 左侧）
+  const btnLocateCurrent = $("#btn-locate-current");
+  if (btnLocateCurrent) btnLocateCurrent.addEventListener("click", locateCurrentTrack);
   const fileInput = $("#file-input");
   const folderInput = $("#folder-input");
   function ensureLocalFolder() {

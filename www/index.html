@@ -67,6 +67,14 @@
             <span>📂 音乐目录</span>
             <span class="dir-header-actions">
               <button id="btn-dir-toggle" class="btn-dir-toggle hidden" title="展开/收起目录">展开 ▾</button>
+              <button id="btn-locate-current" class="btn-locate-current" title="定位到当前播放（居中）" aria-label="定位到当前播放">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7"/>
+                  <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+                  <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+                </svg>
+              </button>
               <button id="btn-add-dir" class="btn-add-dir" title="添加目录">＋</button>
             </span>
           </div>
@@ -776,7 +784,7 @@
       </div>
 
       <div class="settings-footer">
-        <span class="settings-version">v2.22.15</span>
+        <span class="settings-version">v2.22.16</span>
         <button id="set-reset" class="set-reset">恢复默认</button>
       </div>
     </div>
