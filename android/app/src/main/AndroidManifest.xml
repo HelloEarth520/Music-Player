@@ -59,8 +59,11 @@
 
     <!-- Permissions -->
 
-    <!-- Capacitor 官方模板标配：WebView 网络栈 / 在线资源必需（本地 https://localhost 服务虽不依赖，但不可缺省） -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- v2.22.18：移除 INTERNET 权限——本应用是纯本地播放器，页面经 WebView 进程内
+         scheme 拦截加载（https://localhost / _capacitor_file_ 均不出网卡），JS 无远程请求。
+         移除后系统级禁止本应用建立任何网络连接。未来若加在线功能（歌词抓取/在线流/
+         检查更新）或需 live-reload 调试，在此处加回：
+         <uses-permission android:name="android.permission.INTERNET" /> -->
     <!-- 读取媒体图片：当前代码全部走 SAF / ACTION_GET_CONTENT（免权限），暂未实际使用，保留以防后续直接读 MediaStore -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- Android 13+ 通知栏 / 锁屏媒体控制必需（缺少则系统静默丢弃媒体通知） -->

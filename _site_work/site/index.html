@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MusicPlayer - 一切皆可自定 · 跨平台本地音乐播放器</title>
+<meta name="description" content="MusicPlayer：基于 Web 技术的本地音乐播放器，彩色渐变极简风格，支持 Android / Windows / Linux / Web。一切皆可自定。">
+<style>
+  :root {
+    --bg: #07070d;
+    --text: #e8e8f0;
+    --muted: #9a9ab0;
+    --card: rgba(255,255,255,0.045);
+    --card-border: rgba(255,255,255,0.10);
+    --violet: #a78bfa;
+    --pink: #f472b6;
+    --cyan: #22d3ee;
+    --amber: #fbbf24;
+    --green: #34d399;
+    --red: #fb7185;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; overflow:hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 整页容器 ===== */
+  #container { height:100vh; height:100svh; transition: transform .95s cubic-bezier(.22,1,.36,1); will-change: transform; }
+  .page {
+    height:100vh; height:100svh; position:relative;
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    text-align:center; padding: 40px 24px; overflow:hidden;
+  }
+  .glow { position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(42rem 30rem at 12% -5%, rgba(167,139,250,0.16), transparent 60%),
+      radial-gradient(38rem 28rem at 90% 12%, rgba(244,114,182,0.12), transparent 60%),
+      radial-gradient(46rem 34rem at 50% 110%, rgba(34,211,238,0.10), transparent 60%);
+  }
+  /* 星星点点 */
+  .spark { position:absolute; border-radius:50%; pointer-events:none; opacity:0;
+    animation: twinkle var(--d,4s) ease-in-out var(--dl,0s) infinite; }
+  @keyframes twinkle {
+    0%,100% { opacity:0; transform:translateY(0) scale(.5); }
+    50%     { opacity:.9; transform:translateY(-8px) scale(1); }
+  }
+
+  /* ===== 逐字飞入（串行：前一字基本完成后下一字开始） ===== */
+  .char { display:inline-block; opacity:0; transform:translateY(.6em) scale(.82); filter:blur(8px);
+    transition: opacity .18s ease, transform .19s cubic-bezier(.22,1,.36,1), filter .18s ease; }
+  .page.active .char { opacity:1; transform:none; filter:none; }
+  /* 渐变标题拆字后：每个字独立保留渐变 */
+  h1 .char, .grad .char {
+    background: linear-gradient(100deg, var(--cyan) 0%, var(--violet) 50%, var(--pink) 100%);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+  }
+
+  /* ===== 元素逐个弹出（串行：一个完全弹出后下一个开始） =====
+     入场：自下而上 + 缩放回弹（overshoot bezier 产生弹跳感） */
+  .item { opacity:0; transform:translateY(26px) scale(.9);
+    transition: opacity .24s ease, transform .5s cubic-bezier(.34,1.56,.64,1), box-shadow .3s ease, border-color .3s ease; }
+
+  /* 切页瞬间禁用过渡，让被中断的元素立即回到隐藏态（防止返回时卡在半路） */
+  .page.no-anim .char, .page.no-anim .item { transition: none !important; }
+  .page.active .item { opacity:1; transform:none; }
+
+  /* 卡片/平台/下载卡：立起来的投影 + 点击 Q 弹放大 */
+  .card, .plat, .download-card {
+    box-shadow: 0 16px 38px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.35);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .page.active .card:hover, .page.active .plat:hover, .page.active .download-card:hover {
+    transform: translateY(-6px) scale(1.045);
+    box-shadow: 0 26px 56px rgba(0,0,0,.62), 0 10px 20px rgba(0,0,0,.42);
+    border-color: rgba(255,255,255,.22);
+    transition: transform .32s cubic-bezier(.34,1.56,.64,1), box-shadow .32s ease, border-color .32s ease, opacity .3s ease;
+    transition-delay: 0ms;
+  }
+  .page.active .card:active, .page.active .plat:active, .page.active .download-card:active {
+    transform: scale(.93);
+    box-shadow: 0 10px 24px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.4);
+    transition: transform .08s ease, box-shadow .08s ease, border-color .08s ease;
+    transition-delay: 0ms;
+  }
+  .page.active .badge:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,.3);
+    transition: transform .28s cubic-bezier(.34,1.56,.64,1), border-color .28s ease;
+    transition-delay: 0ms;
+  }
+
+  /* ===== 通用 ===== */
+  .wrap { position:relative; z-index:1; width:100%; max-width:1080px; }
+
+  /* --- Hero --- */
+  .logo { width:88px; height:88px; margin:0 auto 26px; border-radius:24px;
+    display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(135deg, rgba(167,139,250,0.25), rgba(244,114,182,0.22), rgba(34,211,238,0.20));
+    border:1px solid var(--card-border);
+    box-shadow: 0 0 60px rgba(167,139,250,0.35), 0 0 120px rgba(244,114,182,0.15);
+    animation: float 6s ease-in-out infinite; }
+  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+  .logo svg { width:46px; height:46px; }
+  h1 { font-size:clamp(46px, 8vw, 86px); font-weight:800; letter-spacing:-1px; line-height:1.12;
+    filter: drop-shadow(0 0 28px rgba(167,139,250,0.35)); }
+  .tagline { margin-top:18px; font-size:clamp(15px,2.3vw,20px); color:var(--muted); }
+  .tagline b { color:var(--text); font-weight:600; }
+  .badges { margin-top:26px; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; }
+  .badge { font-size:13px; padding:6px 14px; border-radius:999px; letter-spacing:.3px;
+    border:1px solid var(--card-border); background:var(--card); color:var(--muted);
+    display:inline-flex; align-items:center; gap:6px; text-decoration:none; }
+  .badge svg { width:14px; height:14px; }
+  .ver { margin-top:24px; font-size:14px; display:inline-flex; align-items:center; gap:8px;
+    padding:6px 16px; border-radius:999px;
+    border:1px solid rgba(34,211,238,0.35); background:rgba(34,211,238,0.07); color:var(--cyan); }
+  .cta { margin-top:34px; display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+  .btn { text-decoration:none; font-size:16px; font-weight:600; padding:14px 34px; border-radius:14px;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+  .btn:hover { transform:translateY(-2px); }
+  .btn-primary { color:#0a0a14; background:linear-gradient(100deg, var(--violet), var(--pink));
+    box-shadow:0 8px 32px rgba(244,114,182,0.35); }
+  .btn-primary:hover { box-shadow:0 12px 44px rgba(244,114,182,0.5); }
+  .btn-ghost { color:var(--text); border:1px solid var(--card-border); background:var(--card);
+    display:inline-flex; align-items:center; gap:8px; }
+  .btn-ghost:hover { border-color:rgba(255,255,255,0.3); }
+  .btn-ghost svg { width:17px; height:17px; }
+
+  /* --- 区块标题 --- */
+  .sec-title { font-size:clamp(26px,4.2vw,38px); font-weight:700; letter-spacing:-.5px; }
+  .sec-sub { color:var(--muted); margin-top:10px; font-size:15px; }
+
+  /* --- 特性卡片 --- */
+  .grid { margin-top:44px; display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--card-border); border-radius:18px;
+    padding:24px 22px; }
+  .card:hover { border-color:rgba(255,255,255,0.22); background:rgba(255,255,255,0.06); }
+  .card .ic { width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; margin-bottom:14px; }
+  .card .ic svg { width:21px; height:21px; }
+  .ic-violet { background:rgba(167,139,250,0.14); color:var(--violet); }
+  .ic-pink   { background:rgba(244,114,182,0.14); color:var(--pink); }
+  .ic-cyan   { background:rgba(34,211,238,0.14); color:var(--cyan); }
+  .ic-amber  { background:rgba(251,191,36,0.14); color:var(--amber); }
+  .ic-green  { background:rgba(52,211,153,0.14); color:var(--green); }
+  .ic-red    { background:rgba(251,113,133,0.14); color:var(--red); }
+  .card h3 { font-size:16.5px; font-weight:600; margin-bottom:6px; }
+  .card p  { font-size:13.5px; color:var(--muted); }
+  .badge-new { display:inline-block; font-size:10.5px; font-weight:700; color:#0a0a14; background:linear-gradient(100deg,var(--amber),var(--pink));
+    border-radius:999px; padding:2px 8px; margin-left:8px; vertical-align:2px; }
+
+  /* --- 平台 --- */
+  .platforms { margin-top:44px; display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; }
+  .plat { text-align:center; padding:30px 18px; border-radius:18px;
+    background:var(--card); border:1px solid var(--card-border); }
+  .plat:hover { border-color:rgba(255,255,255,0.22); }
+  .plat svg { width:34px; height:34px; opacity:.9; }
+  .plat h4 { margin-top:12px; font-size:16px; font-weight:600; }
+  .plat p  { font-size:12.5px; color:var(--muted); margin-top:2px; }
+
+  /* --- 下载 --- */
+  .download-card { margin-top:28px; border-radius:22px; padding:34px 28px;
+    border:1px solid var(--card-border);
+    background:linear-gradient(160deg, rgba(167,139,250,0.10), rgba(244,114,182,0.08), rgba(34,211,238,0.08)); }
+  .download-card h3 { font-size:22px; font-weight:700; }
+  .download-card p { color:var(--muted); margin-top:8px; font-size:14.5px; }
+  .gh-link { margin-top:26px; display:inline-flex; align-items:center; gap:10px;
+    color:#0a0a14; text-decoration:none; font-weight:700; font-size:16px;
+    padding:15px 38px; border-radius:14px;
+    background:linear-gradient(100deg, var(--amber), var(--pink));
+    box-shadow:0 8px 32px rgba(251,191,36,0.28);
+    transition: transform .18s ease, box-shadow .18s ease; }
+  .gh-link:hover { transform:translateY(-2px); box-shadow:0 12px 44px rgba(251,191,36,0.42); }
+  .gh-link svg { width:20px; height:20px; }
+  .web-link { margin-top:14px; display:inline-flex; align-items:center; gap:8px;
+    color:#0a0a14; text-decoration:none; font-weight:700; font-size:15px;
+    padding:12px 30px; border-radius:14px;
+    background:linear-gradient(100deg, var(--cyan), var(--violet));
+    box-shadow:0 8px 28px rgba(34,211,238,0.25);
+    transition: transform .18s ease, box-shadow .18s ease; }
+  .web-link:hover { transform:translateY(-2px); box-shadow:0 12px 40px rgba(34,211,238,0.42); }
+  .web-link svg { width:18px; height:18px; }
+  .mirror { margin-top:14px; font-size:12.5px; color:var(--muted); }
+  .mirror a { color:var(--cyan); text-decoration:none; }
+  .mirror a:hover { text-decoration:underline; }
+
+  /* --- 免责声明（居中展示） --- */
+  .disclaimer {
+    max-width:820px; margin:38px auto 0; font-size:clamp(15px,2vw,18px); font-weight:800; line-height:2;
+    background:linear-gradient(90deg, var(--red), var(--amber), var(--green), var(--cyan), var(--violet), var(--pink), var(--red));
+    background-size:220% auto;
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    animation: rainbow 7s linear infinite;
+    filter: drop-shadow(0 0 16px rgba(244,114,182,0.3));
+  }
+  @keyframes rainbow { to { background-position:220% center; } }
+  .foot-meta { margin-top:20px; font-size:13px; color:rgba(154,154,176,0.75); }
+  .foot-meta a { color:var(--muted); text-decoration:none; }
+  .foot-meta a:hover { color:var(--text); text-decoration:underline; }
+  .page-num { position:absolute; bottom:26px; left:50%; transform:translateX(-50%); z-index:2;
+    font-size:12px; letter-spacing:4px; color:rgba(154,154,176,0.5); }
+
+  /* ===== 右侧导航点 ===== */
+  #dots { position:fixed; right:22px; top:50%; transform:translateY(-50%); z-index:50;
+    display:flex; flex-direction:column; gap:14px; }
+  .dot { width:9px; height:9px; border-radius:50%; border:none; cursor:pointer; padding:0;
+    background:rgba(255,255,255,0.22); transition: all .25s ease; position:relative; }
+  .dot:hover { background:rgba(255,255,255,0.5); }
+  .dot.active { background:linear-gradient(135deg, var(--violet), var(--pink)); transform:scale(1.35);
+    box-shadow:0 0 10px rgba(244,114,182,0.7); }
+  .dot::after { content:attr(data-title); position:absolute; right:20px; top:50%; transform:translateY(-50%) translateX(4px);
+    white-space:nowrap; font-size:12px; color:var(--muted); background:rgba(10,10,20,0.85);
+    border:1px solid var(--card-border); padding:3px 10px; border-radius:8px; opacity:0; pointer-events:none;
+    transition: opacity .2s ease, transform .2s ease; }
+  .dot:hover::after { opacity:1; transform:translateY(-50%) translateX(0); }
+
+  @media (max-width:600px) {
+    .cta .btn { width:100%; text-align:center; justify-content:center; }
+    #dots { right:12px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+
+  <!-- ===== P1 Hero ===== -->
+  <section class="page" id="p1">
+    <div class="glow"></div>
+    <div class="wrap">
+      <div class="logo item" style="--i:0" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="url(#lg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="24" y2="24">
+              <stop offset="0" stop-color="#a78bfa"/><stop offset=".5" stop-color="#f472b6"/><stop offset="1" stop-color="#22d3ee"/>
+            </linearGradient>
+          </defs>
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+        </svg>
+      </div>
+      <h1 id="t-title">MusicPlayer</h1>
+      <p class="tagline item" id="t-tagline">基于 Web 技术的<b>本地音乐播放器</b>，彩色渐变极简风格。<br>本地存储，无需联网，<b>一切皆可自定</b>。</p>
+      <div class="badges">
+        <span class="badge item" style="--i:1"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 9.48l1.84-3.18c.16-.31.04-.7-.26-.86a.66.66 0 00-.86.26l-1.84 3.18c-.63-.3-1.32-.44-2.06-.44-.75 0-1.45.16-2.08.44l-1.84-3.18a.66.66 0 00-.86-.26c-.3.16-.42.55-.26.86l1.84 3.18A5.87 5.87 0 009 11.92V13h6v-1.08c0-.9-.25-1.72-.7-2.44l3.3 5.9 2.3 2.32a.66.66 0 00.94 0 .66.66 0 000-.94l-2.1-2.12c.16-.55.26-1.13.26-1.74 0-.76-.16-1.46-.4-2.1l-.84.28zM9 13v-1c-1.84 0-3.3 1.5-3.3 3.3 0 1.82 1.46 3.3 3.3 3.3 1.83 0 3.3-1.48 3.3-3.3 0-1.8-1.47-3.3-3.3-3.3zM9 17.2c-.5 0-.9-.4-.9-.9 0-.5.4-.9.9-.9s.9.4.9.9c0 .5-.4.9-.9.9z"/></svg>Android</span>
+        <span class="badge item" style="--i:2"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5v5h5.5v-5H3zm6.5 0v5H15v-5H9.5zM3 12v5h5.5v-5H3zm6.5 0v5H15v-5H9.5zm6.5-6.5v5h5v-5h-5zm0 6.5v5h5v-5h-5z"/></svg>Windows</span>
+        <span class="badge item" style="--i:3"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.25 15.69c-.56-1.16-2.68-1.69-4.87-1.69H8.4c-1.48 0-2.72-.42-3.44-.9a8.24 8.24 0 008.42 5.4c2.62 0 4.92-1.1 6.13-2.81z"/></svg>Linux</span>
+        <a class="badge item" style="--i:4" href="web-demo/index.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>Web 版演示</a>
+      </div>
+      <div class="ver item" style="--i:5">v2.22.12 · 开源 · MIT License</div>
+      <div class="cta">
+        <a class="btn btn-primary item cta-now" style="--i:6" href="https://github.com/HelloEarth520/Music-Player/releases" target="_blank" rel="noopener">立即下载</a>
+        <a class="btn btn-ghost item cta-now" style="--i:7" href="https://github.com/HelloEarth520/Music-Player" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.72.5.1.68-.22.68-.49 0-.24-.01-.88-.01-1.72-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.36 9.36 0 015 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.6.69.49A10.28 10.28 0 0022 12.25C22 6.58 17.52 2 12 2z"/></svg>
+          GitHub 源码
+        </a>
+      </div>
+    </div>
+    <div class="page-num item" style="--i:8">01 / 04</div>
+  </section>
+
+  <!-- ===== P2 功能特性 ===== -->
+  <section class="page" id="p2">
+    <div class="glow"></div>
+    <div class="wrap">
+      <h2 class="sec-title"><span class="grad" id="t-feat">功能特性</span></h2>
+      <p class="sec-sub item" style="--i:1">极简但不简单 —— 为真正喜欢听音乐的人而做</p>
+      <div class="grid">
+        <div class="card item" style="--i:2">
+          <div class="ic ic-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.5 8.5c4-2 9-2 13 0M5.5 15.5c4 2 9 2 13 0M12 3v4M12 17v4M8 12h8"/></svg></div>
+          <h3>动态背景</h3><p>根据当前曲目自动切换渐变氛围色，视觉随音乐流动。</p>
+        </div>
+        <div class="card item" style="--i:3">
+          <div class="ic ic-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/></svg></div>
+          <h3>旋转封面</h3><p>播放时封面如黑胶唱片旋转，暂停即停，仪式感拉满。</p>
+        </div>
+        <div class="card item" style="--i:4">
+          <div class="ic ic-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V4m0 0h9l3 3h4v13H4z"/><path d="M9 12h6M9 15h4"/></svg></div>
+          <h3>文件夹导入</h3><p>一键导入整个音乐文件夹，无需逐个添加。</p>
+        </div>
+        <div class="card item" style="--i:5">
+          <div class="ic ic-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 3h5v5M8 21H3v-5M21 3l-7 7M3 21l7-7"/></svg></div>
+          <h3>随机播放</h3><p>智能随机、不重复，让每一首都不被辜负。</p>
+        </div>
+        <div class="card item" style="--i:6">
+          <div class="ic ic-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg></div>
+          <h3>三种循环</h3><p>顺序播放 / 列表循环 / 单曲循环，随心切换。</p>
+        </div>
+        <div class="card item" style="--i:7">
+          <div class="ic ic-red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4"/><path d="M4 20h16"/></svg></div>
+          <h3>拖拽支持</h3><p>直接把文件拖进窗口即可播放，省去一切多余操作。</p>
+        </div>
+        <div class="card item" style="--i:8">
+          <div class="ic ic-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg></div>
+          <h3>格式检测</h3><p>不支持的格式自动标注，导入前一目了然。</p>
+        </div>
+        <div class="card item" style="--i:9">
+          <div class="ic ic-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <h3>自定义标题</h3><p>应用标题完全自定义，一切皆可自定。</p>
+        </div>
+        <div class="card item" style="--i:10">
+          <div class="ic ic-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l1.8 5.4H19l-4.5 3.3L16.3 17 12 13.8 7.7 17l1.8-5.3L5 8.4h5.2z"/></svg></div>
+          <h3>内置转码</h3><p>转码开关可关，兼容更多格式，内存占用可控。</p>
+        </div>
+      </div>
+    </div>
+    <div class="page-num item" style="--i:11">02 / 04</div>
+  </section>
+
+  <!-- ===== P3 多端覆盖 ===== -->
+  <section class="page" id="p3">
+    <div class="glow"></div>
+    <div class="wrap">
+      <h2 class="sec-title"><span class="grad" id="t-plat">多端覆盖</span></h2>
+      <p class="sec-sub item" style="--i:1">一套代码，随处播放 —— 主打 Android 平板适配</p>
+      <div class="platforms">
+        <div class="plat item" style="--i:2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
+          <h4>Android</h4><p>主力平台 · 平板深度适配</p>
+        </div>
+        <div class="plat item" style="--i:3">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5v5h5.5v-5H3zm6.5 0v5H15v-5H9.5zM3 12v5h5.5v-5H3zm6.5 0v5H15v-5H9.5zm6.5-6.5v5h5v-5h-5zm0 6.5v5h5v-5h-5z"/></svg>
+          <h4>Windows</h4><p>桌面体验 · 拖拽即播</p>
+        </div>
+        <div class="plat item" style="--i:4">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.25 15.69c-.56-1.16-2.68-1.69-4.87-1.69H8.4c-1.48 0-2.72-.42-3.44-.9a8.24 8.24 0 008.42 5.4c2.62 0 4.92-1.1 6.13-2.81z"/></svg>
+          <h4>Linux</h4><p>deb 安装包 · 开源友好</p>
+        </div>
+        <div class="plat item" style="--i:5">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+          <h4>Web</h4><p>网页版演示 · 支持上传本地音频试听</p>
+        </div>
+      </div>
+    </div>
+    <div class="page-num item" style="--i:6">03 / 04</div>
+  </section>
+
+  <!-- ===== P4 下载 + 免责声明 ===== -->
+  <section class="page" id="p4">
+    <div class="glow"></div>
+    <div class="wrap">
+      <h2 class="sec-title"><span class="grad" id="t-dl">开始自定之旅</span></h2>
+      <div class="download-card item" style="--i:1">
+        <h3>🎵 v2.22.12 已发布</h3>
+        <p>覆盖 Android / Windows / Linux / Web 四端</p>
+        <a class="gh-link" href="https://github.com/HelloEarth520/Music-Player/releases" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+          前往 GitHub Releases 下载
+        </a>
+        <a class="web-link" href="web-demo/index.html" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+          网页版在线演示（可上传本地音频试听）
+        </a>
+        <p class="mirror">源码：<a href="https://github.com/HelloEarth520/Music-Player" target="_blank" rel="noopener">github.com/HelloEarth520/Music-Player</a></p>
+      </div>
+      <p class="disclaimer item" id="t-dc" style="--i:2">⚠ 免责声明：MusicPlayer 为开源个人项目，本页面仅作项目展示用途，不构成任何商业承诺与保证。请仅播放您拥有合法权利的音频文件，音乐版权归原权利人所有。</p>
+      <p class="foot-meta item" style="--i:3">
+        <a href="https://github.com/HelloEarth520/Music-Player" target="_blank" rel="noopener">GitHub</a> · MIT License · © <span id="yr"></span> MusicPlayer · 20100510.xyz
+      </p>
+    </div>
+    <div class="page-num item" style="--i:4">04 / 04</div>
+  </section>
+
+</div>
+
+<!-- 右侧导航 -->
+<nav id="dots">
+  <button class="dot" data-i="0" data-title="首页"></button>
+  <button class="dot" data-i="1" data-title="功能特性"></button>
+  <button class="dot" data-i="2" data-title="多端覆盖"></button>
+  <button class="dot" data-i="3" data-title="下载与声明"></button>
+</nav>
+
+<script>
+(function () {
+  'use strict';
+  var pages = Array.prototype.slice.call(document.querySelectorAll('.page'));
+  var dots = Array.prototype.slice.call(document.querySelectorAll('.dot'));
+  var container = document.getElementById('container');
+  var current = 0, busy = false;
+  var DUR = 550;
+
+  /* ---------- 星星点点粒子 ---------- */
+  var SPARK_COLORS = ['#a78bfa', '#f472b6', '#22d3ee', '#ffffff', '#fbbf24'];
+  pages.forEach(function (pg) {
+    for (var i = 0; i < 26; i++) {
+      var s = document.createElement('span');
+      s.className = 'spark';
+      var sz = 1.5 + Math.random() * 2.5;
+      s.style.cssText = 'width:' + sz + 'px;height:' + sz + 'px;' +
+        'left:' + (Math.random() * 100) + '%;top:' + (Math.random() * 100) + '%;' +
+        'background:' + SPARK_COLORS[i % SPARK_COLORS.length] + ';' +
+        'box-shadow:0 0 ' + (sz * 2.5) + 'px ' + SPARK_COLORS[i % SPARK_COLORS.length] + ';' +
+        '--d:' + (3 + Math.random() * 4).toFixed(2) + 's;--dl:' + (Math.random() * 5).toFixed(2) + 's;';
+      pg.appendChild(s);
+    }
+  });
+
+  /* ---------- 逐字拆分（保留 <b> 等子元素） ---------- */
+  function splitText(el) {
+    if (!el || el.dataset.split) return;
+    el.dataset.split = '1';
+    var frag = document.createDocumentFragment();
+    Array.prototype.forEach.call(el.childNodes, function (node) {
+      if (node.nodeType === 3) {           /* 文本节点 */
+        node.textContent.split('').forEach(function (ch) {
+          var sp = document.createElement('span');
+          sp.className = 'char';
+          sp.textContent = (ch === ' ' || ch === '\n') ? '\u00A0' : ch;
+          frag.appendChild(sp);
+        });
+      } else if (node.nodeType === 1) {    /* 子元素（如 <b>） */
+        var b = document.createElement(node.tagName);
+        node.textContent.split('').forEach(function (ch) {
+          var sp = document.createElement('span');
+          sp.className = 'char';
+          sp.textContent = (ch === ' ' || ch === '\n') ? '\u00A0' : ch;
+          b.appendChild(sp);
+        });
+        frag.appendChild(b);
+      }
+    });
+    el.textContent = '';
+    el.appendChild(frag);
+  }
+  splitText(document.getElementById('t-title'));
+  splitText(document.getElementById('t-feat'));
+  splitText(document.getElementById('t-plat'));
+  splitText(document.getElementById('t-dl'));
+
+  /* ---------- 串行动画调度 ----------
+     文字流：字与字快速衔接（打字机式）；但任何元素必须等前面文字流
+     全部播完（最后一字开始时间 + 字动画时长）后才开始，绝不重叠。 */
+  var CHAR_MS  = 60;    /* 字间隔：下一字在前一字开始后 60ms 起 */
+  var CHAR_DUR = 190;   /* 单字动画时长（与 CSS transition 一致） */
+  var ITEM_MS  = 280;   /* 元素间隔：前一个元素完全弹出后下一个才起 */
+  function schedule(page) {
+    var cursor = 0;       /* 下一个动画元素的开始时间 */
+    var charEnd = 0;      /* 当前文字流视觉结束时间 */
+    var els = page.querySelectorAll('.char, .item');
+    Array.prototype.forEach.call(els, function (el) {
+      /* 首页下载按钮：打开页面立即出现，不排队 */
+      if (el.classList.contains('cta-now')) { el.style.transitionDelay = '0ms'; return; }
+      el.style.transitionDelay = cursor + 'ms';
+      if (el.classList.contains('char')) {
+        cursor += CHAR_MS;
+        charEnd = cursor + CHAR_DUR;         /* 记录字流中最后一字结束时刻 */
+      } else {
+        if (charEnd > cursor) cursor = charEnd;  /* 等文字流播完才轮到元素 */
+        charEnd = 0;
+        cursor += ITEM_MS;
+      }
+    });
+  }
+  pages.forEach(schedule);
+
+  /* ---------- 页面激活（强制 reflow 保证每次重播） ---------- */
+  function activate(i) {
+    pages.forEach(function (p) { p.classList.remove('active'); });
+    void container.offsetWidth;             /* 强制重绘，先渲染隐藏态 */
+    pages[i].classList.add('active');
+    dots.forEach(function (d, idx) { d.classList.toggle('active', idx === i); });
+  }
+
+  function goTo(i) {
+    if (i < 0 || i >= pages.length || i === current || busy) return;
+    busy = true;
+    current = i;
+    /* 切页瞬间禁用过渡并强制渲染隐藏态，被中断的元素立即复位，
+       返回时从头播放，不会卡在半路 */
+    pages.forEach(function (p) {
+      p.classList.add('no-anim');
+      p.classList.remove('active');
+    });
+    void container.offsetWidth;
+    pages.forEach(function (p) { p.classList.remove('no-anim'); });
+    container.style.transform = 'translateY(-' + (current * 100) + '%)';
+    dots.forEach(function (d, idx) { d.classList.toggle('active', idx === current); });
+    /* 等页面滑入接近完成后再激活内容，卡片弹出动画全程可见 */
+    window.setTimeout(function () {
+      schedule(pages[current]);             /* 重置串行延迟（含动画结束后被清零的） */
+      void container.offsetWidth;
+      pages[current].classList.add('active');
+      busy = false;
+    }, Math.round(DUR * 0.75));
+  }
+
+  /* 动画播完后清除内联延迟，保证 hover/点击即时响应 */
+  container.addEventListener('transitionend', function (e) {
+    var t = e.target;
+    if (t.classList && t.classList.contains('item') && t.style.transitionDelay) {
+      t.style.transitionDelay = '0ms';
+    }
+  });
+
+  /* ---------- 首次加载：双 rAF 延迟激活，确保逐字/逐元素动画从头播放 ---------- */
+  window.requestAnimationFrame(function () {
+    window.requestAnimationFrame(function () { activate(0); });
+  });
+
+  /* 滚轮 */
+  var wheelLock = false;
+  window.addEventListener('wheel', function (e) {
+    if (wheelLock) return;
+    wheelLock = true;
+    window.setTimeout(function () { wheelLock = false; }, 700);
+    var dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;
+    if (dy > 12) goTo(current + 1);
+    else if (dy < -12) goTo(current - 1);
+  }, { passive: true });
+
+  /* 触摸滑动 */
+  var touchY = 0;
+  window.addEventListener('touchstart', function (e) { touchY = e.touches[0].clientY; }, { passive: true });
+  window.addEventListener('touchend', function (e) {
+    var dy = touchY - e.changedTouches[0].clientY;
+    if (Math.abs(dy) > 55) { dy > 0 ? goTo(current + 1) : goTo(current - 1); }
+  }, { passive: true });
+
+  /* 键盘 */
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+    else if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); goTo(current - 1); }
+  });
+
+  /* 导航点 */
+  dots.forEach(function (d) {
+    d.addEventListener('click', function () { goTo(parseInt(d.dataset.i, 10)); });
+  });
+
+  document.getElementById('yr').textContent = new Date().getFullYear();
+})();
+</script>
+</body>
+</html>
