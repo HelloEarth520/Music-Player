@@ -7,7 +7,7 @@ echo.
 echo 正在将 MusicPlayer 关联到常见音频格式...
 echo.
 
-set "PLAYER_PATH=index.html"
+set "PLAYER_PATH=%~dp0index.html"
 set "CHROME_PATH="
 
 :: 查找 Chrome
@@ -52,7 +52,7 @@ echo.
 echo [提示] Windows 10/11 对文件关联有保护，如未生效请：
 echo   1. 右键任意 MP3 文件 → 打开方式 → 选择其他应用
 echo   2. 选择 Chrome/Edge，勾选"始终使用此应用"
-echo   3. 地址栏输入: index.html
+echo   3. 地址栏输入: <本目录>\index.html
 echo.
 echo 完成！
 pause

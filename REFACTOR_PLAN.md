@@ -2,7 +2,7 @@
 
 > 架构师：高见远  
 > 目标：在**严格保持原有业务逻辑与功能行为 1:1 不变**的前提下，提升 4 个核心 JS 文件的可读性与可维护性。  
-> 项目根目录：`仓库根目录`
+> 项目根目录：仓库根目录
 
 ---
 
@@ -157,7 +157,7 @@ L70/L315/L340 三处 `mainWindow.webContents.send('open-files', ...)` 合并为�
 **不进一步拆分虚拟滚动/元数据预加载的理由**：这两块与 `state.playlist`、`state.currentIndex`、`renderPlaylist`、`playAt` 深度耦合，强行拆分会引入大量全局共享，得不偿失。保留在 player.js 内做内部整理（提取常量、补注释）即可。
 
 **新文件**：
-- `player-equalizer.js`（新增）
+- `player-equalizer.js`（新增，位于仓库根目录）
   - 内容：`eqState` 常量 + `initEqualizer` / `setEQGain` / `applyEQPreset` / `updateEQDisplay` / `toggleEQ` / `openEqualizer` / `closeEqualizer` / `startEQVisualizer` / `stopEQVisualizer` / `bindEqualizerEvents` + 模块级变量 `eqVisualizerId` / `eqAnalyser` + 底部自初始化 try/catch 块。
   - 自取 `audio` DOM 引用：`const audio = document.getElementById('audio-engine');`（与 player.js 指向同一节点，互不冲突）。
   - 不依赖 player.js 任何全局变量/函数。

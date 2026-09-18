@@ -18,6 +18,11 @@ local.properties
 Thumbs.db
 *.log
 
+# 本机日志 / 崩溃日志（含设备信息，不入库）
+_crashlog/
+_build_*.log
+logcat*.txt
+
 # 本地私有数据（不参与开源）
 data/
 secrets/

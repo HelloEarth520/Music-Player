@@ -2507,7 +2507,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
    主开关关 → 全回退；主开关开 → 各区独立控制（见下方 fx-off-<区> 规则） */
 
 /* ---- v2.22.19 性能改造：fx-flow 时间函数改为 steps(240, end) ----
-   背景：真机 + CDP 逐项 A/B 实测，App 前台亮屏播放恒定占用
+   背景：Android 真机 + CDP 逐项 A/B 实测，App 前台亮屏播放恒定占用
    163%~168%（约 1.65 个 CPU 核心）。逐项归因结果：
      · 19 个 .playlist-item-title 的 fx-flow 连续动画：−24 ~ −31 点（四轮独立复现，唯一显著项）
      · backdrop-filter 全关：−10 点；壁纸 filter/blur：±0；阴影：−2 点；跑马灯环：±0

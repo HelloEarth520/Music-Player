@@ -12,7 +12,7 @@ import java.util.List;
 /**
  * MusicMediaBrowserService（v2.22.7）
  * 把应用注册为系统认可的"媒体应用"：
- * 系统 UI（锁屏媒体卡 / 部分厂商 ROM 原子随身听 / 蓝牙 / 车机）通过 MediaBrowser
+ * 系统 UI（锁屏媒体卡 /厂商原子随身听 / 蓝牙 / 车机）通过 MediaBrowser
  * 连接本服务取得 MediaSession token，从而渲染原生媒体控制（可拖进度、音量联动）。
  *
  * 会话单一来源：本服务在 onCreate 创建 MediaSession，并交给

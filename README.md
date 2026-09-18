@@ -15,7 +15,7 @@
 ## 📁 项目结构
 
 ```
-
+MusicPlayer/
 ├── index.html              # 主页面
 ├── style.css               # 渐变极简样式
 ├── player.js               # 播放逻辑

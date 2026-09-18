@@ -5,7 +5,7 @@ echo  MusicPlayer - Electron 打包工具
 echo ============================================
 echo.
 
-cd /d .
+cd /d "%~dp0"
 
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
@@ -23,7 +23,7 @@ if "%choice%"=="1" (
   echo 正在打包绿色版...
   call npx electron-builder --win dir --x64
   echo.
-  echo 完成！输出目录: dist\win-unpacked\
+  echo 完成！输出目录: %~dp0dist\win-unpacked\
   echo 双击 MusicPlayer.exe 即可运行
 )
 
@@ -46,5 +46,5 @@ if "%choice%"=="4" (
 )
 
 echo.
-start explorer "dist"
+start explorer "%~dp0dist"
 pause

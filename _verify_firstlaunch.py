@@ -1,6 +1,7 @@
-import subprocess, re, time, xml.etree.ElementTree as ET
+import os, shutil, subprocess, re, time, xml.etree.ElementTree as ET
 
-ADB = "adb"
+# adb 可执行文件：优先取环境变量 ADB，其次 PATH 上的 adb
+ADB = os.environ.get("ADB") or shutil.which("adb") or "adb"
 
 def adb(args):
     return subprocess.run([ADB] + args, capture_output=True, text=True).stdout

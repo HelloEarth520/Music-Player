@@ -89,4 +89,6 @@ if __name__ == '__main__':
         import subprocess, sys
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'Pillow', '-q'])
         from PIL import Image, ImageDraw
-    save_ico(r'assets\icons\icon.ico')
+    import os
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    save_ico(os.path.join(_root, 'assets', 'icons', 'icon.ico'))
