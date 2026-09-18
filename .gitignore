@@ -27,3 +27,4 @@ secrets/
 _release/
 _repro/
 _backup_refactor/
+_perf_bak_*/

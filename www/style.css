@@ -144,6 +144,8 @@ html, body {
    Playlist Panel
    ============================ */
 .playlist-panel {
+  /* v2.22.18 性能：侧栏渲染隔离，虚拟列表滚动不牵动整页重排 */
+  contain: layout paint;
   position: relative;
   width: var(--sidebar-w, 280px);
   flex-shrink: 0;
@@ -185,6 +187,9 @@ html, body {
 .playlist::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 4px; }
 
 .playlist-item {
+  /* v2.22.18 性能：渲染隔离。列表项由虚拟滚动频繁重建/改写，
+     不加 contain 时任何一项的样式变化都可能触发整列表的布局与重绘排查。 */
+  contain: layout paint;
   display: flex; align-items: center; gap: 12px;
   padding: 10px 18px;
   cursor: pointer;
@@ -338,6 +343,17 @@ html, body {
   transition: box-shadow 0.4s;
   overflow: hidden;
   touch-action: pan-y;   /* v2.23 左右滑切歌：横滑归 JS 手势，纵滑放行页面滚动 */
+  will-change: transform;
+}
+
+/* v2.22.18 性能：有封面图时，img 铺满整个圆且 .cover 有 overflow:hidden，
+   玻璃层被完全遮住、肉眼不可见，却仍要参与每帧的 backdrop 快照重算 —— 直接关掉。
+   （封面处于旋转状态，18px 模糊每帧重算，是前台高 CPU 的主要来源之一。
+     无封面时才保留液态玻璃圆，此时它静止、可被合成器缓存。） */
+.cover.has-img {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: transparent;
 }
 
 /* 顶部弧形高光，强化液态玻璃质感 */
@@ -589,8 +605,8 @@ html, body {
   height: 26px;
   border-radius: 13px;
   background: rgba(255,255,255,0.10);
-  backdrop-filter: blur(14px) saturate(1.5);
-  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
   border: 1px solid rgba(255,255,255,0.28);
   color: #fff;
   box-shadow:
@@ -628,8 +644,8 @@ html, body {
 /* 控制按钮：半透明液态玻璃 + 悬浮 */
 .ctrl-btn {
   background: rgba(255,255,255,0.10);
-  backdrop-filter: blur(14px) saturate(1.5);
-  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
   border: 1px solid rgba(255,255,255,0.28);
   color: var(--text);
   width: 48px; height: 48px;
@@ -660,8 +676,8 @@ html, body {
   width: 64px; height: 64px;
   font-size: 1.5rem;
   background: rgba(255,255,255,0.16);
-  backdrop-filter: blur(18px) saturate(1.7) brightness(1.05);
-  -webkit-backdrop-filter: blur(18px) saturate(1.7) brightness(1.05);
+  backdrop-filter: blur(10px) saturate(1.7) brightness(1.05);
+  -webkit-backdrop-filter: blur(10px) saturate(1.7) brightness(1.05);
   border: 1px solid rgba(255,255,255,0.35);
   box-shadow:
     0 14px 36px rgba(0,0,0,0.40),
@@ -1545,6 +1561,8 @@ html, body {
    Shared Glass Utility (driven by --glass-blur / --glass-frost)
    ============================ */
 .glass {
+  /* v2.22.18 性能：面板渲染隔离 */
+  contain: layout paint;
   background: rgba(255,255,255, var(--glass-frost, 0.16));
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.5);
   -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.5);
@@ -1790,16 +1808,29 @@ html, body {
    .app(z:auto) 之前 → 画在 #bg 之上、界面之下；绝不能为负（见上注释）。 */
 .bg-veil {
   position: fixed;
-  inset: -160px;           /* 超出屏幕：边缘 blur 采样不露未模糊边 */
+  inset: 0;
   z-index: 0;
   pointer-events: none;
   background: transparent;
-  backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.4);
+  /* v2.22.18 性能改造：本层不再承担模糊。
+     原实现：整屏 backdrop-filter，每帧对下层做「全屏快照 + 高斯模糊」。
+     v2.22.19 复测修正：整屏 backdrop-filter 单独关闭实测仅 −10 点（约 −6%），
+     并非当时判断的主因（主因是 fx-flow 连续动画，见 2507 行附近说明）。
+     本改动仍保留：filter 只在壁纸层真正变化时才需要重算，比逐帧快照更省，
+     且视觉等价（同为对整张壁纸做 blur + saturate）。 */
 }
 .bg-veil.off {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  /* 兼容保留：开关语义已移交给 .bg-layer.blurred（见下），本层无需再切换 */
+  opacity: 1;
+}
+
+/* 壁纸模糊（原 .bg-veil 的 backdrop-filter 等价实现）
+   由 player.js 的 updateBgVeil() 在「开启模糊且非 live 模式」时加 .blurred。
+   filter 会让图像边缘 ~blur 半径渐隐，故放大 1.08 倍把边缘推离可视区。 */
+.bg-layer.blurred {
+  filter: blur(var(--glass-blur, 10px)) saturate(1.4);
+  transform: scale(1.08);
+  transform-origin: center center;
 }
 
 /* 纯色背景选择：应用内透明菜单（非系统白色弹窗） */
@@ -1820,8 +1851,8 @@ html, body {
   border-radius: 18px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   padding: 20px 22px;
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
   color: #f4f4f8;
 }
 .solid-color-head {
@@ -2475,6 +2506,20 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
 /* v2.23 按三分区拆成三段（渐变内容不变）：顶栏 / 主界面 / 设置与弹窗。
    主开关关 → 全回退；主开关开 → 各区独立控制（见下方 fx-off-<区> 规则） */
 
+/* ---- v2.22.19 性能改造：fx-flow 时间函数改为 steps(240, end) ----
+   背景：真机 + CDP 逐项 A/B 实测，App 前台亮屏播放恒定占用
+   163%~168%（约 1.65 个 CPU 核心）。逐项归因结果：
+     · 19 个 .playlist-item-title 的 fx-flow 连续动画：−24 ~ −31 点（四轮独立复现，唯一显著项）
+     · backdrop-filter 全关：−10 点；壁纸 filter/blur：±0；阴影：−2 点；跑马灯环：±0
+     · 只把持续动画的"更新率"降下来即可拿到与"完全停掉动画"相同的收益
+   原理：fx-flow 动的是 background-position，而元素是 background-clip:text 的文字，
+   帧帧都要重新栅格化文字渐变色；一整屏 30 个这样的元素叠加，就把渲染管线钉在
+   "每帧全视口重绘"状态上。steps() 不会改变动画外观（仍是 300% 背景缓慢位移），
+   只是把插值量化为 240 个台阶——30s 周期下约 8 次/秒，位移速度仍为约 70px/s，
+   肉眼与逐帧插值无差别，但重绘次数从 121 次/秒降到 8 次/秒。
+   实测：全量 fx-flow 元素加 steps(240) 后 164.5% → 121.3%（−26%）。
+   注意：steps() 与 linear 互斥，不可写 `steps(...) linear`。 */
+
 /* —— 顶栏区 —— */
 .titlebar .lbl,
 .logo #logo-text,
@@ -2485,7 +2530,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 
 /* —— 主界面区 —— */
@@ -2505,7 +2550,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 
 /* —— 设置与弹窗区 —— */
@@ -2524,7 +2569,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 @keyframes fx-flow {
   0%   { background-position: 0% center; }
@@ -2538,7 +2583,7 @@ html[data-layout="tablet"] { --titlebar-h: 64px; }
 .btn-batch-export {
   background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #fbbf24, #22d3ee);
   background-size: 300% auto;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 
 /* ---- 开关关闭（html.fx-off）：逐项还原各自原色 / 原渐变底 ---- */
@@ -2717,8 +2762,8 @@ select.fx-select { display: none !important; }
   padding: 7px 14px;
   border-radius: 999px;
   background: rgba(255,255,255,0.10);
-  backdrop-filter: blur(12px) saturate(1.5);
-  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
   border: 1px solid rgba(255,255,255,0.28);
   box-shadow: inset 0 1px 1px rgba(255,255,255,0.35);
   font-size: 0.82rem;
@@ -2739,7 +2784,7 @@ select.fx-select { display: none !important; }
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 html.fx-off .glow-select-label {
   color: #f1f0ff;
@@ -2762,8 +2807,8 @@ html.fx-off .glow-select-label {
   max-height: 46vh;
   overflow-y: auto;
   background: rgba(16,12,40,0.72);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
   border: 1px solid rgba(255,255,255,0.25);
   border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -2787,7 +2832,7 @@ html.fx-off .glow-select-label {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: fx-flow var(--fx-speed, 10s) linear infinite;
+  animation: fx-flow var(--fx-speed, 10s) steps(240, end) infinite;
 }
 /* 选中 / 悬浮：整块亮渐变底 + 深色字（亮底上深字最清晰） */
 .glow-select-item:hover,

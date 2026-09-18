@@ -1173,8 +1173,9 @@
   ];
   const veilEl = () => $("#bg-veil");
   function randOf(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-  // 演示「壁纸」：两团鲜明径向色块 + 深色底（无真实图片），使「模糊(Blur)」的
-  // 整屏磨砂遮罩 #bg-veil 效果肉眼可见
+  // 演示「壁纸」：两团鲜明径向色块 + 深色底（无真实图片），使「模糊(Blur)」效果肉眼可见。
+  // v2.22.18 性能：模糊不再由 #bg-veil 的整屏 backdrop-filter 承担，
+  // 改为一次性作用在壁纸层自身的 filter 上（.bg-layer.blurred），视觉等价但更省。
   function applyBg() {
     const a = randOf(STANDARD_COLORS);
     const b = randOf(STANDARD_COLORS);
@@ -1184,6 +1185,7 @@
       `radial-gradient(circle at 84% 76%, ${b} 0, ${b} 22%, transparent 56%),` +
       `linear-gradient(150deg, ${c} 0%, #14112e 88%)`;
     if (veilEl()) veilEl().classList.toggle("off", !blurOn);
+    if (bg) bg.classList.toggle("blurred", !!blurOn);
   }
 
   /* ---------- 纯色背景：应用内透明选色菜单 ---------- */
