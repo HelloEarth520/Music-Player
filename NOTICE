@@ -1,33 +1,119 @@
-MusicPlayer — 第三方开源库声明 (NOTICE)
-=============================================
+MusicPlayer — 第三方组件与许可声明 (NOTICE)
+==============================================
 
-本项目自身以 MIT 协议开源（见 LICENSE）。
-以下为构建/运行所依赖的第三方开源库及其协议：
+本文件列出 MusicPlayer 分发包（Android APK / Electron 桌面版 / Web 版）
+中包含的第三方组件、版本与适用许可。
+许可证全文见同目录下的 ./licenses/ 目录。
 
-1. Capacitor (core / android / cli) 8.3.1
-   - 协议：Apache License 2.0
-   - 版权：Capacitor 贡献者 (© The Capacitor Authors)
-   - 项目：https://github.com/ionic-team/capacitor
+--------------------------------------------------------------------------------
+一、本项目自身
+--------------------------------------------------------------------------------
+原创代码（除第二、三节所列第三方组件外的全部源码）：
+  Copyright (c) 2026 HelloEarth520
+  许可：MIT（全文见 ./LICENSE）
 
-2. AndroidX
-   - appcompat / coordinatorlayout / core-splashscreen 等
-   - 协议：Apache License 2.0
+⚠ 重要：由于分发包内含 GPL-2.0-or-later（@ffmpeg/core）与
+  LGPL-3.0（FFmpegKit）组件，**分发包整体**不能仅以 MIT 条款分发，
+  须同时满足第二、三节所述的 copyleft 条款。
+  若你只取用本项目原创代码、不含随包的第三方二进制，可单独按 MIT 使用。
+
+--------------------------------------------------------------------------------
+二、随分发包一起分发的第三方组件
+--------------------------------------------------------------------------------
+
+1. FFmpegKit / FFmpeg（Android 原生库）
+   - 文件：android/app/src/main/jniLibs/arm64-v8a/
+             libavcodec.so      libavdevice.so    libavfilter.so
+             libavformat.so     libavutil.so      libswresample.so
+             libswscale.so      libffmpegkit.so   libffmpegkit_abidetect.so
+   - 来源：FFmpegKit (Arthenica) prebuilt, android-arm64, "full" 变体
+   - FFmpeg 版本：6.0（libavcodec 60.3.100）
+   - 编译配置：含 --enable-version3，未启用 --enable-gpl
+   - 许可：LGPL-3.0
+           全文：./licenses/LGPL-3.0.txt 与 ./licenses/GPL-3.0.txt
+   - 上游：https://github.com/arthenica/ffmpeg-kit
+           https://ffmpeg.org/
+   - 本项目未修改上述二进制文件。
+
+2. @ffmpeg/core（WebAssembly 转码核心）
+   - 文件：www/vendor/ffmpeg-core/ffmpeg-core.js
+           www/vendor/ffmpeg-core/ffmpeg-core.wasm
+           www/vendor/ffmpeg-core/ffmpeg-core.worker.js
+   - 版本：0.12.10
+   - 许可：GPL-2.0-or-later（全文见 ./licenses/GPL-2.0.txt）
+   - 上游：https://github.com/ffmpegwasm/ffmpeg.wasm
+   - 本项目未修改该文件。
+
+3. @ffmpeg/ffmpeg（WebAssembly 封装层）
+   - 文件：www/vendor/ffmpeg-lib/
+   - 版本：0.12.15
+   - 许可：MIT
+   - 上游：https://github.com/ffmpegwasm/ffmpeg.wasm
+
+4. @ffmpeg/util（WebAssembly 工具函数）
+   - 文件：www/vendor/ffmpeg-util/
+   - 版本：0.12.2
+   - 许可：MIT
+   - 上游：https://github.com/ffmpegwasm/ffmpeg.wasm
+
+5. Capacitor（core / android / cli）
+   - 版本：8.3.1
+   - 许可：Apache-2.0（全文见 ./licenses/Apache-2.0.txt）
+   - 版权：The Capacitor Authors
+   - 上游：https://github.com/ionic-team/capacitor
+
+6. AndroidX（appcompat / coordinatorlayout / core-splashscreen）
+   - 许可：Apache-2.0
    - 版权：The Android Open Source Project
+   - 上游：https://developer.android.com/jetpack/androidx
 
-3. Electron 30.x  (开发/桌面端依赖)
-   - 协议：MIT
-   - 版权：OpenJS Foundation 及相关贡献者
+7. Gradle Wrapper
+   - 文件：android/gradle/wrapper/gradle-wrapper.jar
+   - 许可：Apache-2.0
+   - 上游：https://gradle.org/
 
-4. electron-builder 24.x  (打包工具，开发依赖)
-   - 协议：MIT
-   - 版权：electron-builder 贡献者
+8. libc++（Android NDK 运行时）
+   - 文件：android/app/src/main/jniLibs/arm64-v8a/libc++_shared.so
+   - 许可：Apache-2.0 with LLVM Exception
+   - 上游：https://developer.android.com/ndk
 
-5. archiver 7.x  (构建期打包，开发依赖)
-   - 协议：MIT
+9. archiver
+   - 版本：7.x（构建期打包）
+   - 许可：MIT
    - 版权：archiver 贡献者
+   - 上游：https://github.com/archiverjs/node-archiver
 
-说明：
-- 本项目完全离线运行，不收集、不上传任何用户数据。
-- 音频转码：当前 Web 层通过本地 FFmpeg.wasm 备选方案实现；
-  原生 ffmpeg-kit 因未从 Maven/JitPack 获取到 aar，暂未集成。
+10. Electron
+   - 版本：30.x（桌面版运行时）
+   - 许可：MIT
+   - 版权：OpenJS Foundation 及相关贡献者
+   - 上游：https://github.com/electron/electron
+
+11. electron-builder
+   - 版本：24.x（构建工具）
+   - 许可：MIT
+   - 版权：electron-builder 贡献者
+   - 上游：https://github.com/electron-userland/electron-builder
+
+--------------------------------------------------------------------------------
+三、LGPL-3.0 合规说明（针对第 1 项 FFmpegKit）
+--------------------------------------------------------------------------------
+- 本分发包以**动态链接**方式使用上述 LGPL 库：它们以独立 .so 文件形式
+  存放于 APK 的 lib/<abi>/ 目录，未与本项目代码静态合并。
+- 上游源码获取：
+    FFmpegKit  https://github.com/arthenica/ffmpeg-kit
+    FFmpeg 6.0 https://ffmpeg.org/download.html
+- 本项目未修改这些库。若需替换为其他版本，可直接替换 APK 内
+  lib/arm64-v8a/ 下的同名 .so 文件并重新签名安装。
+- 许可证全文随本仓库提供（./licenses/LGPL-3.0.txt、./licenses/GPL-3.0.txt）。
+
+--------------------------------------------------------------------------------
+四、其他说明
+--------------------------------------------------------------------------------
+- 本软件为本地离线播放器，不收集、不上传任何用户数据。
+- Android 版转码组件全部使用本地文件（www/vendor/），可完全离线运行。
+- 桌面版（Electron）转码组件在运行时从 CDN 获取 @ffmpeg/ffmpeg、
+  @ffmpeg/util 与 @ffmpeg/core，因此该功能需要联网。
+- 原生 ffmpeg-kit 的 .so 已随仓库放在 jniLibs/ 下；Java 侧调用代码
+  （FFmpegPlugin.java）当前处于注释状态，未实际启用。
 - 本软件按「现状」提供，不作任何担保。任何修改/再分发版本由修改者自行负责。

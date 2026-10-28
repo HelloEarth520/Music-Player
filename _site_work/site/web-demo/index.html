@@ -424,7 +424,13 @@
         <p>本软件面向 <b>Android 手机</b> 与 <b>Android 平板</b> 进行适配与测试。其他平台或设备不做可用性保证，可能出现布局错乱、功能异常或无法运行。</p>
 
         <h2>三、第三方开源库</h2>
-        <p>本软件基于以下开源库构建（各自遵循其许可协议）：Capacitor（Apache-2.0）、AndroidX（Apache-2.0）、Electron（MIT）、archiver（MIT）等。本软件自身以 MIT 协议开源。</p>
+                <p>本软件<b>原创代码</b>以 MIT 协议开源（见仓库 LICENSE）。分发包内含以下第三方组件，各自遵循其许可：</p>
+                <p>· <b>FFmpegKit / FFmpeg 6.0</b>（LGPL-3.0）— 原生音频转码库</p>
+                <p>· <b>@ffmpeg/core 0.12.10</b>（GPL-2.0-or-later）— WebAssembly 转码核心</p>
+                <p>· <b>@ffmpeg/ffmpeg 0.12.15、@ffmpeg/util 0.12.2</b>（MIT）</p>
+                <p>· <b>Capacitor 8.3.1、AndroidX</b>（Apache-2.0）</p>
+                <p>· <b>Electron 30、electron-builder 24、archiver 7</b>（MIT）</p>
+                <p>因含 GPL-2.0-or-later 与 LGPL-3.0 组件，<b>分发包整体的分发</b>须同时遵守上述 copyleft 条款；完整清单与许可证全文见项目内 NOTICE 与 licenses/ 目录。</p>
 
         <h2>四、数据存储</h2>
         <p>软件产生的数据（设置、背景选择、媒体引用等）仅保存在<b>本机</b>（应用私有目录或您指定的目录），绝不上传任何服务器。</p>

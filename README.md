@@ -155,3 +155,24 @@ MusicPlayer/
 - **Prettier** — 代码自动格式化
 - **ESLint** — JavaScript 语法检查
 - **Auto Rename Tag** — HTML 标签自动同步重命名
+
+## 📄 许可与第三方组件
+
+本项目**原创代码**以 [MIT](LICENSE) 协议开源，Copyright (c) 2026 HelloEarth520。
+
+分发包（APK / 桌面版 / Web 版）中还包含以下组件，分发时**必须同时遵守**其条款：
+
+| 组件 | 版本 | 许可 |
+|---|---|---|
+| [FFmpegKit](https://github.com/arthenica/ffmpeg-kit) / FFmpeg | 6.0（full 变体） | **LGPL-3.0** |
+| [@ffmpeg/core](https://github.com/ffmpegwasm/ffmpeg.wasm) | 0.12.10 | **GPL-2.0-or-later** |
+| [@ffmpeg/ffmpeg](https://github.com/ffmpegwasm/ffmpeg.wasm) | 0.12.15 | MIT |
+| [@ffmpeg/util](https://github.com/ffmpegwasm/ffmpeg.wasm) | 0.12.2 | MIT |
+| [Capacitor](https://github.com/ionic-team/capacitor) | 8.3.1 | Apache-2.0 |
+| AndroidX | — | Apache-2.0 |
+
+完整清单（含文件路径、上游链接、LGPL 合规说明）见 [NOTICE](NOTICE)，
+许可证全文见 [licenses/](licenses/)。
+
+> ⚠️ 由于分发包内含 GPL-2.0-or-later 与 LGPL-3.0 组件，**分发包整体**不能仅以 MIT
+> 条款分发。若你只取用本项目原创代码、不含随包的第三方二进制，可单独按 MIT 使用。
